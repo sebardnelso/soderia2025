@@ -146,7 +146,7 @@ app.post('/clientes', async (req, res) => {
     SELECT cod_cliente, nom_cliente, domicilio, localidad, celular
     FROM soda_hoja_header
     WHERE cod_zona = ? AND ter != 1
-    ORDER BY orden ASC
+    ORDER BY secuencia ASC
   `;
 
   try {

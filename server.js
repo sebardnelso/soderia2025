@@ -33,7 +33,7 @@ const executeQueryWithRetry = async (query, params, retries = 3) => {
       return results;
     } catch (err) {
       if (err.code === 'ECONNRESET' && attempt < retries) {
-        console.warn(Intento ${attempt} fallido. Reintentando...);
+        console.warn(`Intento ${attempt} fallido. Reintentando...`);
         await new Promise(res => setTimeout(res, 1000)); // Esperar 1 segundo antes de reintentar
       } else {
         throw err;
@@ -60,7 +60,7 @@ app.post('/login', async (req, res) => {
     const results = await executeQueryWithRetry(query, [nombre, clave]);
 
     if (results.length > 0) {
-      const cod_rep = results[0].cod_rep; // Suponiendo que cod_rep está en el primer resultado
+      const cod_rep = results[0].cod_rep; // Suponiendo que `cod_rep` está en el primer resultado
       res.json({ success: true, cod_rep });
     } else {
       res.status(401).json({ success: false, message: 'Credenciales inválidas' });
@@ -146,7 +146,7 @@ app.get('/rendiciones/:cod_rep', async (req, res) => {
 // Ruta para obtener zonas
 app.post('/zonas', async (req, res) => {
   const { cod_rep } = req.body;
-  console.log(Recibido cod_rep en /zonas: ${cod_rep}); // Verifica el valor recibido
+  console.log(`Recibido cod_rep en /zonas: ${cod_rep}`); // Verifica el valor recibido
 
   if (!cod_rep) {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
@@ -172,19 +172,19 @@ app.post('/zonas', async (req, res) => {
 // Ruta para obtener clientes
 app.post('/clientes', async (req, res) => {
   const { numzona, cod_rep } = req.body;
-  console.log(Recibido numzona: ${numzona}); // Verifica el valor recibido
-  console.log(Recibido cod_rep: ${cod_rep});
+  console.log(`Recibido numzona: ${numzona}`); // Verifica el valor recibido
+  console.log(`Recibido cod_rep: ${cod_rep}`);
 
   if (!numzona || !cod_rep) {
     return res.status(400).json({ success: false, message: 'numzona y cod_rep son requeridos' });
   }
 
-  const query = 
+  const query = `
     SELECT cod_cliente, nom_cliente, domicilio, localidad, celular
     FROM soda_hoja_header
     WHERE cod_zona = ? AND ter != 1
     ORDER BY secuencia ASC
-  ;
+  `;
 
   let connection;
   try {
@@ -213,7 +213,7 @@ app.post('/resultados-del-dia', async (req, res) => {
   }
 
   // Consultas SQL
-  const resultadosQuery = 
+  const resultadosQuery = `
     SELECT
       SUM(venta_A4) AS venta_A4,
       SUM(venta_A3) AS venta_A3,
@@ -223,15 +223,15 @@ app.post('/resultados-del-dia', async (req, res) => {
       SUM(cobrado_ctdo_A4) AS cobrado_ctdo_A4
     FROM resultadofinales
     WHERE cod_rep = ? AND fecha = ?
-  ;
+  `;
 
-  const preciosQuery = 
+  const preciosQuery = `
     SELECT cod_prod, precio
     FROM soda_precios
     WHERE cod_prod IN ('A3', 'A4')
-  ;
+  `;
 
-  const rendicionesQuery = 
+  const rendicionesQuery = `
     SELECT 
       sr.cod_gasto,
       sr.importe,
@@ -239,7 +239,7 @@ app.post('/resultados-del-dia', async (req, res) => {
     FROM soda_rendiciones sr
     JOIN soda_rubros_rendiciones srr ON sr.cod_gasto = srr.cod
     WHERE sr.cod_rep = ? AND sr.fecha = ?
-  ;
+  `;
 
   let connection;
   try {
@@ -322,11 +322,11 @@ app.post('/ventas-mensuales', async (req, res) => {
   const añoActual = fechaHoy.getFullYear();
   const mesActual = fechaHoy.getMonth() + 1; // Los meses en JavaScript son 0-11
 
-  console.log(Código de representante: ${cod_rep});
-  console.log(Año Actual: ${añoActual}, Mes Actual: ${mesActual});
+  console.log(`Código de representante: ${cod_rep}`);
+  console.log(`Año Actual: ${añoActual}, Mes Actual: ${mesActual}`);
 
   // Consultas SQL
-  const ventasMensualesQuery = 
+  const ventasMensualesQuery = `
     SELECT
       rf.fecha,
       rf.zona,
@@ -338,13 +338,13 @@ app.post('/ventas-mensuales', async (req, res) => {
     WHERE rf.cod_rep = ? AND YEAR(rf.fecha) = ? AND MONTH(rf.fecha) = ?
     GROUP BY rf.fecha, rf.zona
     ORDER BY rf.fecha ASC
-  ;
+  `;
 
-  const preciosQuery = 
+  const preciosQuery = `
     SELECT cod_prod, precio
     FROM soda_precios
     WHERE cod_prod IN ('A3', 'A4')
-  ;
+  `;
 
   let connection;
   try {
@@ -422,19 +422,19 @@ app.post('/ventas-mensuales', async (req, res) => {
 // Ruta para obtener movimientos
 app.post('/movimientos', async (req, res) => {
   const { cod_cliente, cod_rep, numzona } = req.body;
-  console.log(Recibido cod_cliente: ${cod_cliente});
-  console.log(Recibido cod_rep: ${cod_rep});
-  console.log(Recibido numzona: ${numzona});
+  console.log(`Recibido cod_cliente: ${cod_cliente}`);
+  console.log(`Recibido cod_rep: ${cod_rep}`);
+  console.log(`Recibido numzona: ${numzona}`);
 
   if (!cod_cliente || !cod_rep || !numzona) {
     return res.status(400).json({ success: false, message: 'cod_cliente, cod_rep y numzona son requeridos' });
   }
 
-  const query = 
+  const query = `
     SELECT cod_prod, cod_cliente, debe, venta, cobrado_ctdo, cobrado_ccte
     FROM soda_hoja_linea
     WHERE cod_cliente = ?
-  ;
+  `;
 
   let connection;
   try {
@@ -471,40 +471,40 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
   }
 
   // Definir consultas
-  const updateMovimientosQuery = 
+  const updateMovimientosQuery = `
     UPDATE soda_hoja_linea
     SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
     WHERE cod_cliente = ? AND cod_prod = ?
-  ;
+  `;
 
-  const checkQuery = 
+  const checkQuery = `
     SELECT COUNT(*) AS count
     FROM resultadofinales
     WHERE cod_rep = ? AND fecha = ? AND zona = ?
-  ;
+  `;
 
   let upsertQuery = '';
   let values = [];
 
   if (cod_prod === 'A4') {
-    upsertQuery = 
+    upsertQuery = `
       INSERT INTO resultadofinales (cod_rep, fecha, zona, venta_A4, cobrado_ctdo_A4, cobrado_ccte_A4)
       VALUES (?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         venta_A4 = venta_A4 + VALUES(venta_A4),
         cobrado_ctdo_A4 = cobrado_ctdo_A4 + VALUES(cobrado_ctdo_A4),
         cobrado_ccte_A4 = cobrado_ccte_A4 + VALUES(cobrado_ccte_A4)
-    ;
+    `;
     values = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
   } else if (cod_prod === 'A3') {
-    upsertQuery = 
+    upsertQuery = `
       INSERT INTO resultadofinales (cod_rep, fecha, zona, venta_A3, cobrado_ctdo_A3, cobrado_ccte_A3)
       VALUES (?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         venta_A3 = venta_A3 + VALUES(venta_A3),
         cobrado_ctdo_A3 = cobrado_ctdo_A3 + VALUES(cobrado_ctdo_A3),
         cobrado_ccte_A3 = cobrado_ccte_A3 + VALUES(cobrado_ccte_A3)
-    ;
+    `;
     values = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
   } else {
     // Manejar otros casos de cod_prod si es necesario
@@ -536,18 +536,18 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     const [upsertResult] = await connection.execute(upsertQuery, values);
 
     // Actualizar el campo 'ter' en soda_hoja_header
-    const updateTerQuery = 
+    const updateTerQuery = `
       UPDATE soda_hoja_header
       SET ter = 1
       WHERE cod_cliente = ?
-    ;
+    `;
     const [updateTerResult] = await connection.execute(updateTerQuery, [cod_cliente]);
 
     // Insertar en soda_hoja_completa
-    const insertCompletaQuery = 
+    const insertCompletaQuery = `
       INSERT INTO soda_hoja_completa (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, fecha, motivo)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ;
+    `;
     // Suponiendo que 'orden' debe ser proporcionado o calculado. Aquí lo dejamos como '0' como ejemplo.
     const orden = 0; // Reemplaza esto con el valor correcto según tu lógica
 
@@ -589,7 +589,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
 app.post('/movimientos-clientes', async (req, res) => {
   const { fecha, numzona, cod_rep } = req.body;
 
-  console.log(Recibido: fecha=${fecha}, numzona=${numzona}, cod_rep=${cod_rep});
+  console.log(`Recibido: fecha=${fecha}, numzona=${numzona}, cod_rep=${cod_rep}`);
 
   // Validación de parámetros
   if (!fecha || !numzona || !cod_rep) {
@@ -597,7 +597,7 @@ app.post('/movimientos-clientes', async (req, res) => {
   }
 
   // Consultas SQL
-  const clientesQuery = 
+  const clientesQuery = `
     SELECT DISTINCT shh.cod_cliente, shh.nom_cliente, shh.domicilio, shh.localidad, shh.celular
     FROM soda_hoja_header shh
     INNER JOIN soda_hoja_completa shc ON shh.cod_cliente = shc.cod_cliente
@@ -606,9 +606,9 @@ app.post('/movimientos-clientes', async (req, res) => {
       AND DATE(shc.fecha) = ?
       AND shh.ter = 1
     ORDER BY shh.secuencia ASC
-  ;
+  `;
 
-  const movimientosQuery = 
+  const movimientosQuery = `
     SELECT 
       shc.cod_cliente,
       shc.cod_prod,
@@ -629,7 +629,7 @@ app.post('/movimientos-clientes', async (req, res) => {
         WHERE cod_zona = ? AND ter = 1
       )
     ORDER BY shc.fecha DESC, shc.orden ASC
-  ;
+  `;
 
   let connection;
   try {
@@ -637,7 +637,7 @@ app.post('/movimientos-clientes', async (req, res) => {
 
     // Obtener clientes visitados
     const [clientes] = await connection.execute(clientesQuery, [numzona, cod_rep, fecha]);
-    console.log(Clientes obtenidos: ${clientes.length});
+    console.log(`Clientes obtenidos: ${clientes.length}`);
 
     if (clientes.length === 0) {
       return res.json({ success: true, clientes: [] });
@@ -645,7 +645,7 @@ app.post('/movimientos-clientes', async (req, res) => {
 
     // Obtener movimientos para los clientes visitados
     const [movimientos] = await connection.execute(movimientosQuery, [cod_rep, numzona, fecha, numzona]);
-    console.log(Movimientos obtenidos: ${movimientos.length});
+    console.log(`Movimientos obtenidos: ${movimientos.length}`);
 
     // Agrupar movimientos por cliente
     const movimientosPorCliente = movimientos.reduce((acc, movimiento) => {
@@ -671,7 +671,7 @@ app.post('/movimientos-clientes', async (req, res) => {
       movimientos: movimientosPorCliente[cliente.cod_cliente] || []
     }));
 
-    console.log(Clientes con Movimientos: ${clientesConMovimientos.length});
+    console.log(`Clientes con Movimientos: ${clientesConMovimientos.length}`);
 
     res.json({ success: true, clientes: clientesConMovimientos });
   } catch (error) {
@@ -692,5 +692,5 @@ app.use((err, req, res, next) => {
 
 // Iniciar el servidor
 app.listen(PORT, () => {
-  console.log(Servidor corriendo en el puerto ${PORT});
-}); 
+  console.log(`Servidor corriendo en el puerto ${PORT}`);
+});

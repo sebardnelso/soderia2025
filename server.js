@@ -12,55 +12,39 @@ const PORT = 3000; // Puedes cambiar el puerto si es necesario
 app.use(cors());
 app.use(bodyParser.json());
 
-// Configuración del pool de conexiones a la base de datos con credenciales hardcodeadas
-const pool = mysql.createPool({
-  host: '190.228.29.61',
-  user: 'kalel2016',
-  password: 'Kalel2016',
-  database: 'soda',
-  waitForConnections: true,
-  connectionLimit: 10, // Número máximo de conexiones en el pool
-  queueLimit: 0,
-  connectTimeout: 10000, // Tiempo máximo para establecer una conexión (en ms)
-});
+// Función para crear una conexión a la base de datos
+const createDBConnection = async () => {
+  return await mysql.createConnection({
+    host: '190.228.29.61',
+    user: 'kalel2016',
+    password: 'Kalel2016',
+    database: 'soda',
+    connectTimeout: 10000, // Tiempo máximo para establecer una conexión (en ms)
+  });
+};
 
-// Manejar errores globales del pool
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle connection:', err);
-  // Aquí podrías implementar lógica adicional, como reiniciar el pool si es necesario
-});
-
-// Función de reintento para ejecutar consultas en caso de ECONNRESET o PROTOCOL_CONNECTION_LOST
+// Función de reintento para ejecutar consultas en caso de ECONNRESET
 const executeQueryWithRetry = async (query, params, retries = 3) => {
   for (let attempt = 1; attempt <= retries; attempt++) {
+    let connection;
     try {
-      const [results] = await pool.execute(query, params);
+      connection = await createDBConnection();
+      const [results] = await connection.execute(query, params);
       return results;
     } catch (err) {
-      if (
-        (err.code === 'ECONNRESET' || err.code === 'PROTOCOL_CONNECTION_LOST') &&
-        attempt < retries
-      ) {
-        console.warn(`Intento ${attempt} fallido (${err.code}). Reintentando...`);
+      if (err.code === 'ECONNRESET' && attempt < retries) {
+        console.warn(`Intento ${attempt} fallido. Reintentando...`);
         await new Promise(res => setTimeout(res, 1000)); // Esperar 1 segundo antes de reintentar
       } else {
         throw err;
       }
+    } finally {
+      if (connection) {
+        await connection.end();
+      }
     }
   }
 };
-
-// Verificar la conexión al iniciar el servidor
-(async () => {
-  try {
-    const connection = await pool.getConnection();
-    console.log('Conectado a la base de datos');
-    connection.release();
-  } catch (err) {
-    console.error('No se pudo conectar a la base de datos:', err);
-    process.exit(1); // Salir si no se puede conectar a la base de datos
-  }
-})();
 
 // Ruta de Login
 app.post('/login', async (req, res) => {
@@ -91,12 +75,18 @@ app.post('/login', async (req, res) => {
 app.get('/rubros', async (req, res) => {
   const query = 'SELECT cod, descripcion FROM soda_rubros_rendiciones';
   
+  let connection;
   try {
-    const [results] = await executeQueryWithRetry(query, []);
+    connection = await createDBConnection();
+    const [results] = await connection.execute(query);
     res.json({ success: true, rubros: results });
   } catch (err) {
     console.error('Error al obtener rubros:', err);
     res.status(500).json({ success: false, message: 'Error al obtener rubros' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 
@@ -113,12 +103,18 @@ app.post('/rendiciones', async (req, res) => {
 
   const query = 'INSERT INTO soda_rendiciones (cod_rep, fecha, cod_gasto, importe) VALUES (?, ?, ?, ?)';
 
+  let connection;
   try {
-    const [results] = await executeQueryWithRetry(query, [cod_rep, fecha, cod_gasto, importe]);
+    connection = await createDBConnection();
+    const [results] = await connection.execute(query, [cod_rep, fecha, cod_gasto, importe]);
     res.json({ success: true, message: 'Rendición añadida correctamente', id: results.insertId });
   } catch (err) {
     console.error('Error al añadir rendición:', err);
     res.status(500).json({ success: false, message: 'Error al añadir rendición' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 
@@ -132,12 +128,18 @@ app.get('/rendiciones/:cod_rep', async (req, res) => {
 
   const query = 'SELECT * FROM soda_rendiciones WHERE cod_rep = ?';
 
+  let connection;
   try {
-    const [results] = await executeQueryWithRetry(query, [cod_rep]);
+    connection = await createDBConnection();
+    const [results] = await connection.execute(query, [cod_rep]);
     res.json({ success: true, rendiciones: results });
   } catch (err) {
     console.error('Error al obtener rendiciones:', err);
     res.status(500).json({ success: false, message: 'Error al obtener rendiciones' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 
@@ -152,12 +154,18 @@ app.post('/zonas', async (req, res) => {
 
   const query = 'SELECT numzona FROM soda_zonaxrepa WHERE cod_rep = ?';
 
+  let connection;
   try {
-    const [results] = await executeQueryWithRetry(query, [cod_rep]);
+    connection = await createDBConnection();
+    const [results] = await connection.execute(query, [cod_rep]);
     res.json({ success: true, zonas: results });
   } catch (err) {
     console.error('Error ejecutando query:', err);
     res.status(500).json({ success: false, message: 'Error en la base de datos' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 
@@ -178,12 +186,18 @@ app.post('/clientes', async (req, res) => {
     ORDER BY secuencia ASC
   `;
 
+  let connection;
   try {
-    const [results] = await executeQueryWithRetry(query, [numzona]);
+    connection = await createDBConnection();
+    const [results] = await connection.execute(query, [numzona]);
     res.json({ success: true, clientes: results });
   } catch (err) {
     console.error('Error ejecutando query:', err);
     res.status(500).json({ success: false, message: 'Error en la base de datos' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 
@@ -227,15 +241,18 @@ app.post('/resultados-del-dia', async (req, res) => {
     WHERE sr.cod_rep = ? AND sr.fecha = ?
   `;
 
+  let connection;
   try {
+    connection = await createDBConnection();
+
     // Ejecutar consultas en paralelo
     const [resultados, precios, rendiciones] = await Promise.all([
-      executeQueryWithRetry(resultadosQuery, [cod_rep, fechaHoy]),
-      executeQueryWithRetry(preciosQuery, []),
-      executeQueryWithRetry(rendicionesQuery, [cod_rep, fechaHoy]),
+      connection.execute(resultadosQuery, [cod_rep, fechaHoy]),
+      connection.execute(preciosQuery),
+      connection.execute(rendicionesQuery, [cod_rep, fechaHoy]),
     ]);
 
-    const resultadosData = resultados[0];
+    const resultadosData = resultados[0][0];
     const preciosData = precios[0];
     const rendicionesData = rendiciones[0];
 
@@ -286,6 +303,10 @@ app.post('/resultados-del-dia', async (req, res) => {
   } catch (err) {
     console.error('Error ejecutando las consultas:', err);
     res.status(500).json({ success: false, error: 'Error al obtener resultados del día' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 
@@ -325,15 +346,18 @@ app.post('/ventas-mensuales', async (req, res) => {
     WHERE cod_prod IN ('A3', 'A4')
   `;
 
+  let connection;
   try {
+    connection = await createDBConnection();
+
     // Ejecutar consultas en paralelo
     const [ventasMensuales, preciosData] = await Promise.all([
-      executeQueryWithRetry(ventasMensualesQuery, [cod_rep, añoActual, mesActual]),
-      executeQueryWithRetry(preciosQuery, [])
+      connection.execute(ventasMensualesQuery, [cod_rep, añoActual, mesActual]),
+      connection.execute(preciosQuery)
     ]);
 
-    const ventasData = ventasMensuales;
-    const precios = preciosData;
+    const ventasData = ventasMensuales[0];
+    const precios = preciosData[0];
 
     // Crear un mapa de precios para fácil acceso
     const preciosMap = {};
@@ -388,6 +412,10 @@ app.post('/ventas-mensuales', async (req, res) => {
   } catch (err) {
     console.error('Error ejecutando las consultas:', err);
     res.status(500).json({ success: false, error: 'Error al obtener ventas mensuales' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 
@@ -408,17 +436,23 @@ app.post('/movimientos', async (req, res) => {
     WHERE cod_cliente = ?
   `;
 
+  let connection;
   try {
-    const [results] = await executeQueryWithRetry(query, [cod_cliente]);
+    connection = await createDBConnection();
+    const [results] = await connection.execute(query, [cod_cliente]);
     res.json({ success: true, movimientos: results });
   } catch (err) {
     console.error('Error ejecutando query:', err);
     res.status(500).json({ success: false, message: 'Error en la base de datos' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 
 app.post('/update-movimientos-y-resultados', async (req, res) => {
-  const { cod_cliente, cod_prod, venta, cobrado_ctdo, cobrado_ccte, cod_rep, zona, bidones_bajados, motivo } = req.body;
+  const { cod_cliente, cod_prod, venta, cobrado_ctdo, cobrado_ccte, cod_rep, zona, bidones_bajados, motivo, fecha } = req.body;
   console.log(cod_cliente, cod_prod, venta, cobrado_ctdo, cobrado_ccte, cod_rep, zona, bidones_bajados, motivo);
 
   // Validaciones básicas
@@ -430,7 +464,8 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     cobrado_ccte === undefined ||
     !cod_rep ||
     !zona ||
-    bidones_bajados === undefined
+    bidones_bajados === undefined ||
+    !fecha
   ) {
     return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
   }
@@ -460,7 +495,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
         cobrado_ctdo_A4 = cobrado_ctdo_A4 + VALUES(cobrado_ctdo_A4),
         cobrado_ccte_A4 = cobrado_ccte_A4 + VALUES(cobrado_ccte_A4)
     `;
-    values = [cod_rep, req.body.fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
+    values = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
   } else if (cod_prod === 'A3') {
     upsertQuery = `
       INSERT INTO resultadofinales (cod_rep, fecha, zona, venta_A3, cobrado_ctdo_A3, cobrado_ccte_A3)
@@ -470,7 +505,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
         cobrado_ctdo_A3 = cobrado_ctdo_A3 + VALUES(cobrado_ctdo_A3),
         cobrado_ccte_A3 = cobrado_ccte_A3 + VALUES(cobrado_ccte_A3)
     `;
-    values = [cod_rep, req.body.fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
+    values = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
   } else {
     // Manejar otros casos de cod_prod si es necesario
     return res.json({ success: false, error: 'Producto desconocido' });
@@ -479,8 +514,8 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
   let connection;
 
   try {
-    // Obtener una conexión del pool
-    connection = await pool.getConnection();
+    // Obtener una conexión
+    connection = await createDBConnection();
 
     // Iniciar una transacción
     await connection.beginTransaction();
@@ -493,7 +528,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     }
 
     // Verificar si ya existe el registro para los resultados
-    const [checkResult] = await connection.execute(checkQuery, [cod_rep, req.body.fecha, zona]);
+    const [checkResult] = await connection.execute(checkQuery, [cod_rep, fecha, zona]);
 
     const count = checkResult[0].count;
 
@@ -507,9 +542,6 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
       WHERE cod_cliente = ?
     `;
     const [updateTerResult] = await connection.execute(updateTerQuery, [cod_cliente]);
-
-    // Obtener la fecha actual en formato YYYY-MM-DD
-    const fecha_actual = new Date().toISOString().split('T')[0];
 
     // Insertar en soda_hoja_completa
     const insertCompletaQuery = `
@@ -532,7 +564,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
       cobrado_ctdo,
       cobrado_ccte,
       bidones_bajados,
-      fecha_actual, // Agregar la fecha actual
+      fecha, // Agregar la fecha proporcionada
       motivo || null // Agregar el motivo, si existe; de lo contrario, null
     ]);
 
@@ -544,11 +576,11 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     if (connection) {
       await connection.rollback();
     }
-    console.error('Error ejecutando query:', err);
+    console.error('Error executing query:', err);
     res.json({ success: false, error: err.message });
   } finally {
     if (connection) {
-      connection.release(); // Liberar la conexión de vuelta al pool
+      await connection.end(); // Cerrar la conexión
     }
   }
 });
@@ -599,9 +631,12 @@ app.post('/movimientos-clientes', async (req, res) => {
     ORDER BY shc.fecha DESC, shc.orden ASC
   `;
 
+  let connection;
   try {
+    connection = await createDBConnection();
+
     // Obtener clientes visitados
-    const [clientes] = await executeQueryWithRetry(clientesQuery, [numzona, cod_rep, fecha]);
+    const [clientes] = await connection.execute(clientesQuery, [numzona, cod_rep, fecha]);
     console.log(`Clientes obtenidos: ${clientes.length}`);
 
     if (clientes.length === 0) {
@@ -609,7 +644,7 @@ app.post('/movimientos-clientes', async (req, res) => {
     }
 
     // Obtener movimientos para los clientes visitados
-    const [movimientos] = await executeQueryWithRetry(movimientosQuery, [cod_rep, numzona, fecha, numzona]);
+    const [movimientos] = await connection.execute(movimientosQuery, [cod_rep, numzona, fecha, numzona]);
     console.log(`Movimientos obtenidos: ${movimientos.length}`);
 
     // Agrupar movimientos por cliente
@@ -642,6 +677,10 @@ app.post('/movimientos-clientes', async (req, res) => {
   } catch (error) {
     console.error('Error en /movimientos-clientes:', error);
     res.status(500).json({ success: false, message: 'Error al obtener movimientos de clientes' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
 

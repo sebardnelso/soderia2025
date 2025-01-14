@@ -551,7 +551,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     // Suponiendo que 'orden' debe ser proporcionado o calculado. Aquí lo dejamos como '0' como ejemplo.
     const orden = 0; // Reemplaza esto con el valor correcto según tu lógica
 
-    const debe = parseFloat(bidones_bajados); // Asegurarse de que 'debe' sea un número
+    const debe = 0; // Asegurarse de que 'debe' sea un número
 
     await connection.execute(insertCompletaQuery, [
       cod_rep,

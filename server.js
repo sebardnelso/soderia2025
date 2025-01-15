@@ -201,7 +201,6 @@ app.post('/clientes', async (req, res) => {
   }
 });
 
-// Ruta para obtener resultados del día y rendiciones
 app.post('/resultados-del-dia', async (req, res) => {
   const { cod_rep } = req.body;
   const fechaHoy = new Date().toISOString().split('T')[0];
@@ -212,17 +211,19 @@ app.post('/resultados-del-dia', async (req, res) => {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
   }
 
-  // Consultas SQL
   const resultadosQuery = `
     SELECT
-      SUM(venta_A4) AS venta_A4,
-      SUM(venta_A3) AS venta_A3,
-      SUM(cobrado_ccte_A3) AS cobrado_ccte_A3,
-      SUM(cobrado_ccte_A4) AS cobrado_ccte_A4,
-      SUM(cobrado_ctdo_A3) AS cobrado_ctdo_A3,
-      SUM(cobrado_ctdo_A4) AS cobrado_ctdo_A4
-    FROM resultadofinales
+      SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A4,
+      SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A3,
+      SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A4,
+      SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A3,
+      COUNT(DISTINCT CONCAT(cod_cliente, '-', cod_prod)) FILTER (WHERE cod_prod = 'A4') AS venta_A4,
+      COUNT(DISTINCT CONCAT(cod_cliente, '-', cod_prod)) FILTER (WHERE cod_prod = 'A3') AS venta_A3,
+      SUM(CASE WHEN cod_prod = 'A4' AND cobrado_ctdo = 0 THEN 1 ELSE 0 END) AS fiado_A4,
+      SUM(CASE WHEN cod_prod = 'A3' AND cobrado_ctdo = 0 THEN 1 ELSE 0 END) AS fiado_A3
+    FROM SODA_HOJA_COMPLETA
     WHERE cod_rep = ? AND fecha = ?
+    GROUP BY fecha, cod_cliente, cod_prod
   `;
 
   const preciosQuery = `
@@ -245,7 +246,6 @@ app.post('/resultados-del-dia', async (req, res) => {
   try {
     connection = await createDBConnection();
 
-    // Ejecutar consultas en paralelo
     const [resultados, precios, rendiciones] = await Promise.all([
       connection.execute(resultadosQuery, [cod_rep, fechaHoy]),
       connection.execute(preciosQuery),
@@ -256,35 +256,22 @@ app.post('/resultados-del-dia', async (req, res) => {
     const preciosData = precios[0];
     const rendicionesData = rendiciones[0];
 
-    console.log('Resultados:', resultadosData);
-    console.log('Precios:', preciosData);
-    console.log('Rendiciones:', rendicionesData);
-
-    // Crear un mapa de precios para fácil acceso
     const preciosMap = {};
     preciosData.forEach(item => {
       preciosMap[item.cod_prod] = parseFloat(item.precio);
     });
 
-    // Calcular Totales al Contado
     const totalesAlContado =
       (parseFloat(resultadosData.cobrado_ctdo_A3) || 0) * (preciosMap['A3'] || 0) +
       (parseFloat(resultadosData.cobrado_ctdo_A4) || 0) * (preciosMap['A4'] || 0);
 
-    // Calcular Totales Cobrado Cuenta Corriente
     const totalesCobradoCCTE =
       (parseFloat(resultadosData.cobrado_ccte_A3) || 0) * (preciosMap['A3'] || 0) +
       (parseFloat(resultadosData.cobrado_ccte_A4) || 0) * (preciosMap['A4'] || 0);
 
-    // Calcular Fiado del día A4 y A3
-    const fiado_a4 = (parseFloat(resultadosData.venta_A4) || 0) - (parseFloat(resultadosData.cobrado_ctdo_A4) || 0);
-    const fiado_a3 = (parseFloat(resultadosData.venta_A3) || 0) - (parseFloat(resultadosData.cobrado_ctdo_A3) || 0);
+    const fiado_a4_pesos = (parseFloat(resultadosData.fiado_A4) || 0) * (preciosMap['A4'] || 0);
+    const fiado_a3_pesos = (parseFloat(resultadosData.fiado_A3) || 0) * (preciosMap['A3'] || 0);
 
-    // Calcular Fiado en pesos
-    const fiado_a4_pesos = fiado_a4 * (preciosMap['A4'] || 0);
-    const fiado_a3_pesos = fiado_a3 * (preciosMap['A3'] || 0);
-
-    // Actualizar los totales en pesos
     const totalesFiadoPesos = fiado_a4_pesos + fiado_a3_pesos;
 
     res.json({
@@ -292,13 +279,13 @@ app.post('/resultados-del-dia', async (req, res) => {
       resultados: resultadosData,
       precios: preciosData,
       rendiciones: rendicionesData,
-      totalesAlContado: totalesAlContado,
-      totalesCobradoCCTE: totalesCobradoCCTE,
-      fiado_a4: fiado_a4,
-      fiado_a3: fiado_a3,
-      fiado_a4_pesos: fiado_a4_pesos,
-      fiado_a3_pesos: fiado_a3_pesos,
-      totalesFiadoPesos: totalesFiadoPesos,
+      totalesAlContado,
+      totalesCobradoCCTE,
+      fiado_a4: resultadosData.fiado_A4,
+      fiado_a3: resultadosData.fiado_A3,
+      fiado_a4_pesos,
+      fiado_a3_pesos,
+      totalesFiadoPesos,
     });
   } catch (err) {
     console.error('Error ejecutando las consultas:', err);

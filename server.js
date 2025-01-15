@@ -217,13 +217,12 @@ app.post('/resultados-del-dia', async (req, res) => {
       SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A3,
       SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A4,
       SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A3,
-      COUNT(DISTINCT CONCAT(cod_cliente, '-', cod_prod)) FILTER (WHERE cod_prod = 'A4') AS venta_A4,
-      COUNT(DISTINCT CONCAT(cod_cliente, '-', cod_prod)) FILTER (WHERE cod_prod = 'A3') AS venta_A3,
+      COUNT(DISTINCT CASE WHEN cod_prod = 'A4' THEN CONCAT(cod_cliente, '-', cod_prod) END) AS venta_A4,
+      COUNT(DISTINCT CASE WHEN cod_prod = 'A3' THEN CONCAT(cod_cliente, '-', cod_prod) END) AS venta_A3,
       SUM(CASE WHEN cod_prod = 'A4' AND cobrado_ctdo = 0 THEN 1 ELSE 0 END) AS fiado_A4,
       SUM(CASE WHEN cod_prod = 'A3' AND cobrado_ctdo = 0 THEN 1 ELSE 0 END) AS fiado_A3
     FROM SODA_HOJA_COMPLETA
     WHERE cod_rep = ? AND fecha = ?
-    GROUP BY fecha, cod_cliente, cod_prod
   `;
 
   const preciosQuery = `

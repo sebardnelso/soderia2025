@@ -221,7 +221,7 @@ app.post('/resultados-del-dia', async (req, res) => {
       COUNT(DISTINCT CASE WHEN cod_prod = 'A3' THEN CONCAT(cod_cliente, '-', cod_prod) END) AS venta_A3,
       SUM(CASE WHEN cod_prod = 'A4' AND cobrado_ctdo = 0 THEN 1 ELSE 0 END) AS fiado_A4,
       SUM(CASE WHEN cod_prod = 'A3' AND cobrado_ctdo = 0 THEN 1 ELSE 0 END) AS fiado_A3
-    FROM SODA_HOJA_COMPLETA
+    FROM soda_hoja_completa
     WHERE cod_rep = ? AND fecha = ?
   `;
 

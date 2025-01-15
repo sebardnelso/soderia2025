@@ -316,7 +316,7 @@ app.post('/resultados-del-dia', async (req, res) => {
 // Ruta para obtener ventas mensuales agrupadas por fecha y zona
 app.post('/ventas-mensuales', async (req, res) => {
   const { cod_rep } = req.body;
-  
+
   if (!cod_rep) {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
   }
@@ -328,19 +328,28 @@ app.post('/ventas-mensuales', async (req, res) => {
   console.log(`Código de representante: ${cod_rep}`);
   console.log(`Año Actual: ${añoActual}, Mes Actual: ${mesActual}`);
 
-  // Consultas SQL
+  // Consulta SQL para obtener ventas mensuales con eliminación de duplicados
   const ventasMensualesQuery = `
-    SELECT
-      rf.fecha,
-      rf.zona,
-      SUM(rf.cobrado_ctdo_A4) AS cobrado_ctdo_A4,
-      SUM(rf.cobrado_ctdo_A3) AS cobrado_ctdo_A3,
-      SUM(rf.cobrado_ccte_A4) AS cobrado_ccte_A4,
-      SUM(rf.cobrado_ccte_A3) AS cobrado_ccte_A3
-    FROM resultadofinales rf
-    WHERE rf.cod_rep = ? AND YEAR(rf.fecha) = ? AND MONTH(rf.fecha) = ?
-    GROUP BY rf.fecha, rf.zona
-    ORDER BY rf.fecha ASC
+    SELECT 
+      fecha,
+      cod_zona AS zona,
+      SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A4,
+      SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A3,
+      SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A4,
+      SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A3
+    FROM (
+      SELECT DISTINCT 
+        fecha,
+        cod_zona,
+        cod_cliente,
+        cod_prod,
+        cobrado_ctdo,
+        cobrado_ccte
+      FROM soda_hoja_completa
+      WHERE cod_rep = ? AND YEAR(fecha) = ? AND MONTH(fecha) = ?
+    ) AS subquery
+    GROUP BY fecha, cod_zona
+    ORDER BY fecha ASC
   `;
 
   const preciosQuery = `
@@ -356,7 +365,7 @@ app.post('/ventas-mensuales', async (req, res) => {
     // Ejecutar consultas en paralelo
     const [ventasMensuales, preciosData] = await Promise.all([
       connection.execute(ventasMensualesQuery, [cod_rep, añoActual, mesActual]),
-      connection.execute(preciosQuery)
+      connection.execute(preciosQuery),
     ]);
 
     const ventasData = ventasMensuales[0];
@@ -364,12 +373,12 @@ app.post('/ventas-mensuales', async (req, res) => {
 
     // Crear un mapa de precios para fácil acceso
     const preciosMap = {};
-    precios.forEach(item => {
+    precios.forEach((item) => {
       preciosMap[item.cod_prod] = parseFloat(item.precio);
     });
 
     // Calcular los montos en pesos y preparar los datos
-    const ventasConPesos = ventasData.map(venta => {
+    const ventasConPesos = ventasData.map((venta) => {
       const cobrado_ctdo_A4_pesos = (venta.cobrado_ctdo_A4 || 0) * (preciosMap['A4'] || 0);
       const cobrado_ctdo_A3_pesos = (venta.cobrado_ctdo_A3 || 0) * (preciosMap['A3'] || 0);
       const cobrado_ccte_A4_pesos = (venta.cobrado_ccte_A4 || 0) * (preciosMap['A4'] || 0);
@@ -391,7 +400,7 @@ app.post('/ventas-mensuales', async (req, res) => {
     let totalCobradoCcte_A4 = 0;
     let totalCobradoCcte_A3 = 0;
 
-    ventasConPesos.forEach(venta => {
+    ventasConPesos.forEach((venta) => {
       totalCobradoCtdo_A4 += venta.cobrado_ctdo_A4_pesos;
       totalCobradoCtdo_A3 += venta.cobrado_ctdo_A3_pesos;
       totalCobradoCcte_A4 += venta.cobrado_ccte_A4_pesos;
@@ -408,10 +417,9 @@ app.post('/ventas-mensuales', async (req, res) => {
         cobrado_ctdo_A3_pesos: totalCobradoCtdo_A3,
         cobrado_ccte_A4_pesos: totalCobradoCcte_A4,
         cobrado_ccte_A3_pesos: totalCobradoCcte_A3,
-        total_general: totalGeneral
-      }
+        total_general: totalGeneral,
+      },
     });
-
   } catch (err) {
     console.error('Error ejecutando las consultas:', err);
     res.status(500).json({ success: false, error: 'Error al obtener ventas mensuales' });

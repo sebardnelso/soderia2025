@@ -211,6 +211,19 @@ app.post('/resultados-del-dia', async (req, res) => {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
   }
 
+  // Consulta para eliminar duplicados desde la base de datos
+  const eliminarDuplicadosQuery = `
+    DELETE t1
+    FROM soda_hoja_completa t1
+    INNER JOIN soda_hoja_completa t2
+    ON t1.cod_cliente = t2.cod_cliente
+      AND t1.cod_prod = t2.cod_prod
+      AND t1.fecha = t2.fecha
+      AND t1.cod_rep = t2.cod_rep
+      AND t1.id > t2.id;
+  `;
+
+  // Consulta principal para obtener resultados
   const resultadosQuery = `
     SELECT
       SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A4,
@@ -244,6 +257,9 @@ app.post('/resultados-del-dia', async (req, res) => {
   let connection;
   try {
     connection = await createDBConnection();
+
+    // Eliminar duplicados antes de ejecutar las consultas principales
+    await connection.execute(eliminarDuplicadosQuery);
 
     const [resultados, precios, rendiciones] = await Promise.all([
       connection.execute(resultadosQuery, [cod_rep, fechaHoy]),
@@ -295,6 +311,7 @@ app.post('/resultados-del-dia', async (req, res) => {
     }
   }
 });
+
 
 // Ruta para obtener ventas mensuales agrupadas por fecha y zona
 app.post('/ventas-mensuales', async (req, res) => {

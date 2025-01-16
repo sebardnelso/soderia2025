@@ -211,7 +211,6 @@ app.post('/resultados-del-dia', async (req, res) => {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
   }
 
-  // Consulta para eliminar duplicados desde la base de datos
   const eliminarDuplicadosQuery = `
     DELETE t1
     FROM soda_hoja_completa t1
@@ -223,7 +222,6 @@ app.post('/resultados-del-dia', async (req, res) => {
       AND t1.id > t2.id;
   `;
 
-  // Consulta principal para obtener resultados
   const resultadosQuery = `
     SELECT
       SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A4,
@@ -258,21 +256,29 @@ app.post('/resultados-del-dia', async (req, res) => {
   try {
     connection = await createDBConnection();
 
-    // Eliminar duplicados antes de ejecutar las consultas principales
+    // Iniciar transacción para garantizar consistencia
+    await connection.beginTransaction();
+
+    // Eliminar duplicados
     await connection.execute(eliminarDuplicadosQuery);
 
+    // Ejecutar las consultas principales
     const [resultados, precios, rendiciones] = await Promise.all([
       connection.execute(resultadosQuery, [cod_rep, fechaHoy]),
       connection.execute(preciosQuery),
       connection.execute(rendicionesQuery, [cod_rep, fechaHoy]),
     ]);
 
+    // Confirmar los cambios
+    await connection.commit();
+
+    // Procesar los datos obtenidos
     const resultadosData = resultados[0][0];
     const preciosData = precios[0];
     const rendicionesData = rendiciones[0];
 
     const preciosMap = {};
-    preciosData.forEach(item => {
+    preciosData.forEach((item) => {
       preciosMap[item.cod_prod] = parseFloat(item.precio);
     });
 
@@ -303,6 +309,8 @@ app.post('/resultados-del-dia', async (req, res) => {
       totalesFiadoPesos,
     });
   } catch (err) {
+    // Revertir cambios en caso de error
+    if (connection) await connection.rollback();
     console.error('Error ejecutando las consultas:', err);
     res.status(500).json({ success: false, error: 'Error al obtener resultados del día' });
   } finally {
@@ -311,6 +319,7 @@ app.post('/resultados-del-dia', async (req, res) => {
     }
   }
 });
+
 
 
 // Ruta para obtener ventas mensuales agrupadas por fecha y zona

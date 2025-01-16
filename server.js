@@ -211,6 +211,7 @@ app.post('/resultados-del-dia', async (req, res) => {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
   }
 
+  // Consulta para eliminar duplicados
   const eliminarDuplicadosQuery = `
     DELETE t1
     FROM soda_hoja_completa t1
@@ -222,18 +223,19 @@ app.post('/resultados-del-dia', async (req, res) => {
       AND t1.id > t2.id;
   `;
 
+  // Consulta principal para obtener resultados
   const resultadosQuery = `
     SELECT
+      SUM(CASE WHEN cod_prod = 'A4' THEN venta ELSE 0 END) AS venta_A4, -- Sumar solo valores de venta
+      SUM(CASE WHEN cod_prod = 'A3' THEN venta ELSE 0 END) AS venta_A3, -- Sumar solo valores de venta
       SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A4,
       SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A3,
       SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A4,
       SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A3,
-      COUNT(DISTINCT CASE WHEN cod_prod = 'A4' THEN CONCAT(cod_cliente, '-', cod_prod) END) AS venta_A4,
-      COUNT(DISTINCT CASE WHEN cod_prod = 'A3' THEN CONCAT(cod_cliente, '-', cod_prod) END) AS venta_A3,
-      SUM(CASE WHEN cod_prod = 'A4' AND cobrado_ctdo = 0 THEN 1 ELSE 0 END) AS fiado_A4,
-      SUM(CASE WHEN cod_prod = 'A3' AND cobrado_ctdo = 0 THEN 1 ELSE 0 END) AS fiado_A3
+      SUM(CASE WHEN cod_prod = 'A4' AND cobrado_ctdo = 0 THEN venta ELSE 0 END) AS fiado_A4,
+      SUM(CASE WHEN cod_prod = 'A3' AND cobrado_ctdo = 0 THEN venta ELSE 0 END) AS fiado_A3
     FROM soda_hoja_completa
-    WHERE cod_rep = ? AND fecha = ?
+    WHERE cod_rep = ? AND fecha = ?;
   `;
 
   const preciosQuery = `

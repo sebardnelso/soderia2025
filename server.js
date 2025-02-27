@@ -620,10 +620,10 @@ app.post('/crear-cliente', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Todos los campos son obligatorios.' });
   }
 
-  const insertClienteQuery = `
-    INSERT INTO clientenuevo (razon, localidad, celular, bidon, cantidad, numzona, secuencia)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `;
+const insertClienteQuery = `
+  INSERT INTO clientenuevo (razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`;
 
   let connection;
   try {

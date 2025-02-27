@@ -217,6 +217,7 @@ app.post('/resultados-del-dia', async (req, res) => {
   console.log('Fecha de hoy:', fechaHoy);
   console.log('Código de representante:', cod_rep);
 
+
   if (!cod_rep) {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
   }

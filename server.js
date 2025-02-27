@@ -181,11 +181,16 @@ app.post('/clientes', async (req, res) => {
   }
 
   const query = `
-    SELECT cod_cliente, nom_cliente, domicilio, localidad, celular, secuencia
-    FROM soda_hoja_header
-    WHERE cod_zona = ? AND ter != 1
-    ORDER BY secuencia ASC
-  `;
+      SELECT cod_cliente, 
+             COALESCE(nom_cliente, 'Nombre no disponible') AS nom_cliente, 
+             domicilio, 
+             localidad, 
+             celular, 
+             secuencia
+      FROM soda_hoja_header
+      WHERE cod_zona = ? AND ter != 1
+      ORDER BY secuencia ASC;
+
 
   let connection;
   try {

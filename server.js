@@ -223,16 +223,15 @@ app.post('/resultados-del-dia', async (req, res) => {
   }
 
   // Consulta para eliminar duplicados
-  const eliminarDuplicadosQuery = `
-    DELETE t1
-    FROM soda_hoja_completa t1
-    INNER JOIN soda_hoja_completa t2
-    ON t1.cod_cliente = t2.cod_cliente
-      AND t1.cod_prod = t2.cod_prod
-      AND t1.fecha = t2.fecha
-      AND t1.cod_rep = t2.cod_rep
-      AND t1.id > t2.id;
-  `;
+const eliminarDuplicadosQuery = `
+  DELETE t1 FROM soda_hoja_completa t1
+  INNER JOIN soda_hoja_completa t2
+  ON t1.cod_cliente = t2.cod_cliente
+    AND t1.cod_prod = t2.cod_prod
+    AND t1.fecha = t2.fecha
+    AND t1.cod_rep = t2.cod_rep
+    AND t1.id > t2.id;
+`;
 
   // Consulta principal para obtener resultados
   const resultadosQuery = `

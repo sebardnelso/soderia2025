@@ -607,6 +607,34 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
   }
 });
 
+
+app.post('/crear-cliente', async (req, res) => {
+  const { razon, localidad, celular, bidon, cantidad, numzona, secuencia } = req.body;
+
+  if (!razon || !localidad || !celular || !bidon || !cantidad || !numzona || !secuencia) {
+    return res.status(400).json({ success: false, message: 'Todos los campos son obligatorios.' });
+  }
+
+  const insertClienteQuery = `
+    INSERT INTO clientenuevo (razon, localidad, celular, bidon, cantidad, numzona, secuencia)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `;
+
+  let connection;
+  try {
+    connection = await createDBConnection();
+    await connection.execute(insertClienteQuery, [razon, localidad, celular, bidon, cantidad, numzona, secuencia]);
+    res.json({ success: true, message: 'Cliente creado exitosamente' });
+  } catch (error) {
+    console.error('Error creando cliente:', error);
+    res.status(500).json({ success: false, message: 'Error al crear el cliente' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
+  }
+});
+
 // Ruta para obtener movimientos de clientes basados en fecha, zona y repartidor
 app.post('/movimientos-clientes', async (req, res) => {
   const { fecha, numzona, cod_rep } = req.body;

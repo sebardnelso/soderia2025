@@ -614,7 +614,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
 
 
 app.post('/crear-cliente', async (req, res) => {
-  const { razon, localidad, celular, bidon, cantidad, numzona, secuencia } = req.body;
+  const { razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia } = req.body;
 
   if (!razon || !localidad || !celular || !bidon || !cantidad || !numzona || !secuencia) {
     return res.status(400).json({ success: false, message: 'Todos los campos son obligatorios.' });
@@ -628,7 +628,7 @@ const insertClienteQuery = `
   let connection;
   try {
     connection = await createDBConnection();
-    await connection.execute(insertClienteQuery, [razon, localidad, celular, bidon, cantidad, numzona, secuencia]);
+    await connection.execute(insertClienteQuery, [razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia]);
     res.json({ success: true, message: 'Cliente creado exitosamente' });
   } catch (error) {
     console.error('Error creando cliente:', error);

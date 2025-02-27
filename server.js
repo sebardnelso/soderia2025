@@ -170,9 +170,10 @@ app.post('/zonas', async (req, res) => {
 });
 
 // Ruta para obtener clientes
+// Ruta para obtener clientes con secuencia
 app.post('/clientes', async (req, res) => {
   const { numzona, cod_rep } = req.body;
-  console.log(`Recibido numzona: ${numzona}`); // Verifica el valor recibido
+  console.log(`Recibido numzona: ${numzona}`);
   console.log(`Recibido cod_rep: ${cod_rep}`);
 
   if (!numzona || !cod_rep) {
@@ -180,7 +181,7 @@ app.post('/clientes', async (req, res) => {
   }
 
   const query = `
-    SELECT cod_cliente, nom_cliente, domicilio, localidad, celular
+    SELECT cod_cliente, nom_cliente, domicilio, localidad, celular, secuencia
     FROM soda_hoja_header
     WHERE cod_zona = ? AND ter != 1
     ORDER BY secuencia ASC
@@ -190,6 +191,9 @@ app.post('/clientes', async (req, res) => {
   try {
     connection = await createDBConnection();
     const [results] = await connection.execute(query, [numzona]);
+
+    console.log('Clientes obtenidos:', results); // 🔍 Verificar si la secuencia se obtiene correctamente
+
     res.json({ success: true, clientes: results });
   } catch (err) {
     console.error('Error ejecutando query:', err);
@@ -200,6 +204,7 @@ app.post('/clientes', async (req, res) => {
     }
   }
 });
+
 
 app.post('/resultados-del-dia', async (req, res) => {
   const { cod_rep } = req.body;

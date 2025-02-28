@@ -189,7 +189,8 @@ app.post('/clientes', async (req, res) => {
              secuencia
       FROM soda_hoja_header
       WHERE cod_zona = ? AND ter != 1
-      ORDER BY secuencia ASC;
+      ORDER BY secuencia ASC
+      ´;
 
 
   let connection;

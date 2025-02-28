@@ -171,9 +171,10 @@ app.post('/zonas', async (req, res) => {
 
 
 // Ruta para obtener clientes
+// Ruta para obtener clientes con secuencia
 app.post('/clientes', async (req, res) => {
   const { numzona, cod_rep } = req.body;
-  console.log(`Recibido numzona: ${numzona}`); // Verifica el valor recibido
+  console.log(`Recibido numzona: ${numzona}`);
   console.log(`Recibido cod_rep: ${cod_rep}`);
 
   if (!numzona || !cod_rep) {
@@ -187,14 +188,24 @@ app.post('/clientes', async (req, res) => {
     ORDER BY secuencia ASC
   `;
 
+  let connection;
   try {
-    const [results] = await pool.execute(query, [numzona]);
+    connection = await createDBConnection();
+    const [results] = await connection.execute(query, [numzona]);
+
+    console.log('Clientes obtenidos:', results); // 🔍 Verificar si la secuencia se obtiene correctamente
+
     res.json({ success: true, clientes: results });
   } catch (err) {
     console.error('Error ejecutando query:', err);
     res.status(500).json({ success: false, message: 'Error en la base de datos' });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 });
+
 
 
 app.post('/resultados-del-dia', async (req, res) => {

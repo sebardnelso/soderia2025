@@ -481,8 +481,14 @@ app.post('/movimientos', async (req, res) => {
 });
 
 app.post('/update-movimientos-y-resultados', async (req, res) => {
-  const { cod_cliente, cod_prod, venta, cobrado_ctdo, cobrado_ccte, cod_rep, zona, bidones_bajados, motivo, fecha } = req.body;
-  console.log(cod_cliente, cod_prod, venta, cobrado_ctdo, cobrado_ccte, cod_rep, zona, bidones_bajados, motivo);
+  const { cod_cliente, cod_prod, venta, cobrado_ctdo, cobrado_ccte, cod_rep, zona, bidones_bajados, motivo } = req.body;
+
+  // 🔹 Ajuste de la fecha a UTC-3 en Node.js
+  const fechaArgentina = new Date();
+  fechaArgentina.setHours(fechaArgentina.getHours() - 3);
+  const fecha = fechaArgentina.toISOString().split('T')[0]; // Fecha corregida
+
+  console.log(`Fecha a registrar: ${fecha}`); // 🔍 Para verificar que la fecha es correcta
 
   // Validaciones básicas
   if (
@@ -499,7 +505,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
   }
 
-  // Definir consultas
+  // Consultas SQL
   const updateMovimientosQuery = `
     UPDATE soda_hoja_linea
     SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
@@ -515,6 +521,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
   let upsertQuery = '';
   let values = [];
 
+  // 🔹 Definir la consulta según el tipo de producto
   if (cod_prod === 'A4') {
     upsertQuery = `
       INSERT INTO resultadofinales (cod_rep, fecha, zona, venta_A4, cobrado_ctdo_A4, cobrado_ccte_A4)
@@ -536,51 +543,42 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     `;
     values = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
   } else {
-    // Manejar otros casos de cod_prod si es necesario
     return res.json({ success: false, error: 'Producto desconocido' });
   }
 
   let connection;
 
   try {
-    // Obtener una conexión
     connection = await createDBConnection();
+    await connection.beginTransaction(); // Iniciar transacción
 
-    // Iniciar una transacción
-    await connection.beginTransaction();
-
-    // Actualizar movimientos
+    // 🔹 Actualizar movimientos
     const [updateResult] = await connection.execute(updateMovimientosQuery, [venta, cobrado_ctdo, cobrado_ccte, cod_cliente, cod_prod]);
 
     if (updateResult.affectedRows === 0) {
       throw new Error('No se encontró el registro para actualizar en soda_hoja_linea');
     }
 
-    // Verificar si ya existe el registro para los resultados
+    // 🔹 Verificar si ya existe el registro en resultadofinales
     const [checkResult] = await connection.execute(checkQuery, [cod_rep, fecha, zona]);
-
     const count = checkResult[0].count;
 
-    // Insertar o actualizar en resultadofinales
+    // 🔹 Insertar o actualizar en resultadofinales
     const [upsertResult] = await connection.execute(upsertQuery, values);
 
-    // Actualizar el campo 'ter' en soda_hoja_header
-    const updateTerQuery = `
-      UPDATE soda_hoja_header
-      SET ter = 1
-      WHERE cod_cliente = ?
-    `;
-    const [updateTerResult] = await connection.execute(updateTerQuery, [cod_cliente]);
+    // 🔹 Actualizar el campo 'ter' en soda_hoja_header
+    const updateTerQuery = `UPDATE soda_hoja_header SET ter = 1 WHERE cod_cliente = ?`;
+    await connection.execute(updateTerQuery, [cod_cliente]);
 
-    // Insertar en soda_hoja_completa
+    // 🔹 Insertar en soda_hoja_completa con la fecha corregida en MySQL también
     const insertCompletaQuery = `
       INSERT INTO soda_hoja_completa (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, fecha, motivo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), '+00:00', '-03:00'), ?);
     `;
-    // Suponiendo que 'orden' debe ser proporcionado o calculado. Aquí lo dejamos como '0' como ejemplo.
-    const orden = 0; // Reemplaza esto con el valor correcto según tu lógica
 
-    const debe = 0; // Asegurarse de que 'debe' sea un número
+    // 🔹 Definir valores
+    const orden = 0;
+    const debe = 0;
 
     await connection.execute(insertCompletaQuery, [
       cod_rep,
@@ -593,19 +591,17 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
       cobrado_ctdo,
       cobrado_ccte,
       bidones_bajados,
-      fecha, // Agregar la fecha proporcionada
-      motivo || null // Agregar el motivo, si existe; de lo contrario, null
+      motivo || null
     ]);
 
-    // Confirmar la transacción
-    await connection.commit();
+    await connection.commit(); // Confirmar transacción
 
     res.json({ success: true });
   } catch (err) {
     if (connection) {
-      await connection.rollback();
+      await connection.rollback(); // Deshacer cambios en caso de error
     }
-    console.error('Error executing query:', err);
+    console.error('Error ejecutando consulta:', err);
     res.json({ success: false, error: err.message });
   } finally {
     if (connection) {
@@ -613,6 +609,7 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     }
   }
 });
+
 
 
 app.post('/crear-cliente', async (req, res) => {

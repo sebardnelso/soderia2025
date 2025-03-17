@@ -638,7 +638,64 @@ const insertClienteQuery = `
     }
   }
 });
+// Ruta para modificar la visita usando async/await
+app.post('/modificar-visita', async (req, res) => {
+  // Se esperan cod_zona, cod_rep, cod_cliente, cod_prod y fecha, además de los datos a actualizar
+  const { cod_zona, cod_rep, cod_cliente, cod_prod, fecha, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, motivo } = req.body;
 
+  console.log("Datos recibidos:", req.body);
+
+  if (!cod_zona || !cod_rep || !cod_cliente || !cod_prod || !fecha) {
+    console.error("Faltan parámetros requeridos");
+    return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos' });
+  }
+
+  try {
+    // Obtener conexión (pool ya es basado en promesas, no se usa pool.promise())
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      console.log("Transacción iniciada");
+
+      // Actualizar en soda_hoja_linea:
+      // Se verifica por: cod_rep, cod_zona, cod_cliente y cod_prod
+      const updateLineaQuery = `
+        UPDATE soda_hoja_linea
+        SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
+        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ?
+      `;
+      const lineaParams = [venta, cobrado_ctdo, cobrado_ccte, cod_rep, cod_zona, cod_cliente, cod_prod];
+      console.log("Parámetros updateLineaQuery:", lineaParams);
+      const [lineaResult] = await connection.execute(updateLineaQuery, lineaParams);
+      console.log("Resultado updateLineaQuery:", lineaResult);
+
+      // Actualizar en soda_hoja_completa:
+      // Se verifica por: cod_rep, cod_zona, cod_cliente, cod_prod y fecha
+      const updateCompletaQuery = `
+        UPDATE soda_hoja_completa
+        SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?, bidones_bajados = ?, motivo = ?
+        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ? AND fecha = ?
+      `;
+      const completaParams = [venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, motivo, cod_rep, cod_zona, cod_cliente, cod_prod, fecha];
+      console.log("Parámetros updateCompletaQuery:", completaParams);
+      const [completaResult] = await connection.execute(updateCompletaQuery, completaParams);
+      console.log("Resultado updateCompletaQuery:", completaResult);
+
+      await connection.commit();
+      console.log("Transacción confirmada");
+      connection.release();
+      res.json({ success: true });
+    } catch (err) {
+      await connection.rollback();
+      connection.release();
+      console.error('Error en la transacción:', err);
+      res.status(500).json({ success: false, error: 'Error al actualizar los registros' });
+    }
+  } catch (err) {
+    console.error('Error obteniendo conexión:', err);
+    res.status(500).json({ success: false, error: 'Error al obtener conexión a la base de datos' });
+  }
+});
 // Ruta para obtener movimientos de clientes basados en fecha, zona y repartidor
 app.post('/movimientos-clientes', async (req, res) => {
   const { fecha, numzona, cod_rep } = req.body;

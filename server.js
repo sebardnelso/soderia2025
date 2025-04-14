@@ -12,24 +12,51 @@ const PORT = 3000; // Puedes cambiar el puerto si es necesario
 app.use(cors());
 app.use(bodyParser.json());
 
-// Función para crear una conexión a la base de datos
-const createDBConnection = async () => {
-  return await mysql.createConnection({
-    host: '190.228.29.61',
-    user: 'kalel2016',
-    password: 'Kalel2016',
-    database: 'soda',
-    connectTimeout: 10000, // Tiempo máximo para establecer una conexión (en ms)
-  });
+// Configuración del pool de conexiones a la base de datos con credenciales hardcodeadas
+const pool = mysql.createPool({
+  host: '190.228.29.61',
+  user: 'kalel2016',
+  password: 'Kalel2016',
+  database: 'soda',
+  waitForConnections: true,
+  connectionLimit: 10, // Número máximo de conexiones en el pool
+  queueLimit: 0,
+  connectTimeout: 10000, // Tiempo máximo para establecer una conexión (en ms)
+  // Se eliminan las opciones 'acquireTimeout' y 'timeout' ya que no son válidas en mysql2
+});
+
+// Función para mantener las conexiones vivas ejecutando una consulta simple cada 5 minutos
+const keepAlive = () => {
+  setInterval(async () => {
+    try {
+      await pool.execute('SELECT 1');
+      console.log('Keep-alive ejecutado correctamente');
+    } catch (err) {
+      console.error('Error en keep-alive:', err);
+    }
+  }, 1000 * 60 * 5); // Cada 5 minutos
 };
+
+// Iniciar el keep-alive
+keepAlive();
+
+// Verificar la conexión al iniciar el servidor
+(async () => {
+  try {
+    const connection = await pool.getConnection();
+    console.log('Conectado a la base de datos');
+    connection.release();
+  } catch (err) {
+    console.error('No se pudo conectar a la base de datos:', err);
+    process.exit(1); // Salir si no se puede conectar a la base de datos
+  }
+})();
 
 // Función de reintento para ejecutar consultas en caso de ECONNRESET
 const executeQueryWithRetry = async (query, params, retries = 3) => {
   for (let attempt = 1; attempt <= retries; attempt++) {
-    let connection;
     try {
-      connection = await createDBConnection();
-      const [results] = await connection.execute(query, params);
+      const [results] = await pool.execute(query, params);
       return results;
     } catch (err) {
       if (err.code === 'ECONNRESET' && attempt < retries) {
@@ -37,10 +64,6 @@ const executeQueryWithRetry = async (query, params, retries = 3) => {
         await new Promise(res => setTimeout(res, 1000)); // Esperar 1 segundo antes de reintentar
       } else {
         throw err;
-      }
-    } finally {
-      if (connection) {
-        await connection.end();
       }
     }
   }
@@ -75,18 +98,12 @@ app.post('/login', async (req, res) => {
 app.get('/rubros', async (req, res) => {
   const query = 'SELECT cod, descripcion FROM soda_rubros_rendiciones';
   
-  let connection;
   try {
-    connection = await createDBConnection();
-    const [results] = await connection.execute(query);
+    const [results] = await pool.execute(query);
     res.json({ success: true, rubros: results });
   } catch (err) {
     console.error('Error al obtener rubros:', err);
     res.status(500).json({ success: false, message: 'Error al obtener rubros' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
   }
 });
 
@@ -103,18 +120,12 @@ app.post('/rendiciones', async (req, res) => {
 
   const query = 'INSERT INTO soda_rendiciones (cod_rep, fecha, cod_gasto, importe) VALUES (?, ?, ?, ?)';
 
-  let connection;
   try {
-    connection = await createDBConnection();
-    const [results] = await connection.execute(query, [cod_rep, fecha, cod_gasto, importe]);
+    const [results] = await pool.execute(query, [cod_rep, fecha, cod_gasto, importe]);
     res.json({ success: true, message: 'Rendición añadida correctamente', id: results.insertId });
   } catch (err) {
     console.error('Error al añadir rendición:', err);
     res.status(500).json({ success: false, message: 'Error al añadir rendición' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
   }
 });
 
@@ -128,18 +139,12 @@ app.get('/rendiciones/:cod_rep', async (req, res) => {
 
   const query = 'SELECT * FROM soda_rendiciones WHERE cod_rep = ?';
 
-  let connection;
   try {
-    connection = await createDBConnection();
-    const [results] = await connection.execute(query, [cod_rep]);
+    const [results] = await pool.execute(query, [cod_rep]);
     res.json({ success: true, rendiciones: results });
   } catch (err) {
     console.error('Error al obtener rendiciones:', err);
     res.status(500).json({ success: false, message: 'Error al obtener rendiciones' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
   }
 });
 
@@ -154,27 +159,19 @@ app.post('/zonas', async (req, res) => {
 
   const query = 'SELECT numzona FROM soda_zonaxrepa WHERE cod_rep = ?';
 
-  let connection;
   try {
-    connection = await createDBConnection();
-    const [results] = await connection.execute(query, [cod_rep]);
+    const [results] = await pool.execute(query, [cod_rep]);
     res.json({ success: true, zonas: results });
   } catch (err) {
     console.error('Error ejecutando query:', err);
     res.status(500).json({ success: false, message: 'Error en la base de datos' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
   }
 });
 
-
 // Ruta para obtener clientes
-// Ruta para obtener clientes con secuencia
 app.post('/clientes', async (req, res) => {
   const { numzona, cod_rep } = req.body;
-  console.log(`Recibido numzona: ${numzona}`);
+  console.log(`Recibido numzona: ${numzona}`); // Verifica el valor recibido
   console.log(`Recibido cod_rep: ${cod_rep}`);
 
   if (!numzona || !cod_rep) {
@@ -182,67 +179,43 @@ app.post('/clientes', async (req, res) => {
   }
 
   const query = `
-    SELECT cod_cliente, nom_cliente, domicilio, localidad, celular, secuencia
+    SELECT cod_cliente, nom_cliente, domicilio, localidad, celular
     FROM soda_hoja_header
     WHERE cod_zona = ? AND ter != 1
     ORDER BY secuencia ASC
   `;
 
-  let connection;
   try {
-    connection = await createDBConnection();
-    const [results] = await connection.execute(query, [numzona]);
-
-    console.log('Clientes obtenidos:', results); // 🔍 Verificar si la secuencia se obtiene correctamente
-
+    const [results] = await pool.execute(query, [numzona]);
     res.json({ success: true, clientes: results });
   } catch (err) {
     console.error('Error ejecutando query:', err);
     res.status(500).json({ success: false, message: 'Error en la base de datos' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
   }
 });
 
-
-
+// Ruta para obtener resultados del día y rendiciones
 app.post('/resultados-del-dia', async (req, res) => {
   const { cod_rep } = req.body;
   const fechaHoy = new Date().toISOString().split('T')[0];
   console.log('Fecha de hoy:', fechaHoy);
   console.log('Código de representante:', cod_rep);
 
-
   if (!cod_rep) {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
   }
 
-  // Consulta para eliminar duplicados
-const eliminarDuplicadosQuery = `
-  DELETE t1 FROM soda_hoja_completa t1
-  INNER JOIN soda_hoja_completa t2
-  ON t1.cod_cliente = t2.cod_cliente
-    AND t1.cod_prod = t2.cod_prod
-    AND t1.fecha = t2.fecha
-    AND t1.cod_rep = t2.cod_rep
-    AND t1.id > t2.id;
-`;
-
-  // Consulta principal para obtener resultados
+  // Consultas SQL
   const resultadosQuery = `
     SELECT
-      SUM(CASE WHEN cod_prod = 'A4' THEN venta ELSE 0 END) AS venta_A4, -- Sumar solo valores de venta
-      SUM(CASE WHEN cod_prod = 'A3' THEN venta ELSE 0 END) AS venta_A3, -- Sumar solo valores de venta
-      SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A4,
-      SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A3,
-      SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A4,
-      SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A3,
-      SUM(CASE WHEN cod_prod = 'A4' AND cobrado_ctdo = 0 THEN venta ELSE 0 END) AS fiado_A4,
-      SUM(CASE WHEN cod_prod = 'A3' AND cobrado_ctdo = 0 THEN venta ELSE 0 END) AS fiado_A3
-    FROM soda_hoja_completa
-    WHERE cod_rep = ? AND fecha = ?;
+      SUM(venta_A4) AS venta_A4,
+      SUM(venta_A3) AS venta_A3,
+      SUM(cobrado_ccte_A3) AS cobrado_ccte_A3,
+      SUM(cobrado_ccte_A4) AS cobrado_ccte_A4,
+      SUM(cobrado_ctdo_A3) AS cobrado_ctdo_A3,
+      SUM(cobrado_ctdo_A4) AS cobrado_ctdo_A4
+    FROM resultadofinales
+    WHERE cod_rep = ? AND fecha = ?
   `;
 
   const preciosQuery = `
@@ -261,47 +234,47 @@ const eliminarDuplicadosQuery = `
     WHERE sr.cod_rep = ? AND sr.fecha = ?
   `;
 
-  let connection;
   try {
-    connection = await createDBConnection();
-
-    // Iniciar transacción para garantizar consistencia
-    await connection.beginTransaction();
-
-    // Eliminar duplicados
-    await connection.execute(eliminarDuplicadosQuery);
-
-    // Ejecutar las consultas principales
+    // Ejecutar consultas en paralelo
     const [resultados, precios, rendiciones] = await Promise.all([
-      connection.execute(resultadosQuery, [cod_rep, fechaHoy]),
-      connection.execute(preciosQuery),
-      connection.execute(rendicionesQuery, [cod_rep, fechaHoy]),
+      pool.execute(resultadosQuery, [cod_rep, fechaHoy]),
+      pool.execute(preciosQuery),
+      pool.execute(rendicionesQuery, [cod_rep, fechaHoy]),
     ]);
 
-    // Confirmar los cambios
-    await connection.commit();
-
-    // Procesar los datos obtenidos
     const resultadosData = resultados[0][0];
     const preciosData = precios[0];
     const rendicionesData = rendiciones[0];
 
+    console.log('Resultados:', resultadosData);
+    console.log('Precios:', preciosData);
+    console.log('Rendiciones:', rendicionesData);
+
+    // Crear un mapa de precios para fácil acceso
     const preciosMap = {};
-    preciosData.forEach((item) => {
+    preciosData.forEach(item => {
       preciosMap[item.cod_prod] = parseFloat(item.precio);
     });
 
+    // Calcular Totales al Contado
     const totalesAlContado =
       (parseFloat(resultadosData.cobrado_ctdo_A3) || 0) * (preciosMap['A3'] || 0) +
       (parseFloat(resultadosData.cobrado_ctdo_A4) || 0) * (preciosMap['A4'] || 0);
 
+    // Calcular Totales Cobrado Cuenta Corriente
     const totalesCobradoCCTE =
       (parseFloat(resultadosData.cobrado_ccte_A3) || 0) * (preciosMap['A3'] || 0) +
       (parseFloat(resultadosData.cobrado_ccte_A4) || 0) * (preciosMap['A4'] || 0);
 
-    const fiado_a4_pesos = (parseFloat(resultadosData.fiado_A4) || 0) * (preciosMap['A4'] || 0);
-    const fiado_a3_pesos = (parseFloat(resultadosData.fiado_A3) || 0) * (preciosMap['A3'] || 0);
+    // Calcular Fiado del día A4 y A3
+    const fiado_a4 = (parseFloat(resultadosData.venta_A4) || 0) - (parseFloat(resultadosData.cobrado_ctdo_A4) || 0);
+    const fiado_a3 = (parseFloat(resultadosData.venta_A3) || 0) - (parseFloat(resultadosData.cobrado_ctdo_A3) || 0);
 
+    // Calcular Fiado en pesos
+    const fiado_a4_pesos = fiado_a4 * (preciosMap['A4'] || 0);
+    const fiado_a3_pesos = fiado_a3 * (preciosMap['A3'] || 0);
+
+    // Actualizar los totales en pesos
     const totalesFiadoPesos = fiado_a4_pesos + fiado_a3_pesos;
 
     res.json({
@@ -309,32 +282,24 @@ const eliminarDuplicadosQuery = `
       resultados: resultadosData,
       precios: preciosData,
       rendiciones: rendicionesData,
-      totalesAlContado,
-      totalesCobradoCCTE,
-      fiado_a4: resultadosData.fiado_A4,
-      fiado_a3: resultadosData.fiado_A3,
-      fiado_a4_pesos,
-      fiado_a3_pesos,
-      totalesFiadoPesos,
+      totalesAlContado: totalesAlContado,
+      totalesCobradoCCTE: totalesCobradoCCTE,
+      fiado_a4: fiado_a4,
+      fiado_a3: fiado_a3,
+      fiado_a4_pesos: fiado_a4_pesos,
+      fiado_a3_pesos: fiado_a3_pesos,
+      totalesFiadoPesos: totalesFiadoPesos,
     });
   } catch (err) {
-    // Revertir cambios en caso de error
-    if (connection) await connection.rollback();
     console.error('Error ejecutando las consultas:', err);
     res.status(500).json({ success: false, error: 'Error al obtener resultados del día' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
   }
 });
-
-
 
 // Ruta para obtener ventas mensuales agrupadas por fecha y zona
 app.post('/ventas-mensuales', async (req, res) => {
   const { cod_rep } = req.body;
-
+  
   if (!cod_rep) {
     return res.status(400).json({ success: false, message: 'cod_rep es requerido' });
   }
@@ -346,28 +311,19 @@ app.post('/ventas-mensuales', async (req, res) => {
   console.log(`Código de representante: ${cod_rep}`);
   console.log(`Año Actual: ${añoActual}, Mes Actual: ${mesActual}`);
 
-  // Consulta SQL para obtener ventas mensuales con eliminación de duplicados
+  // Consultas SQL
   const ventasMensualesQuery = `
-    SELECT 
-      fecha,
-      cod_zona AS zona,
-      SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A4,
-      SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ctdo ELSE 0 END) AS cobrado_ctdo_A3,
-      SUM(CASE WHEN cod_prod = 'A4' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A4,
-      SUM(CASE WHEN cod_prod = 'A3' THEN cobrado_ccte ELSE 0 END) AS cobrado_ccte_A3
-    FROM (
-      SELECT DISTINCT 
-        fecha,
-        cod_zona,
-        cod_cliente,
-        cod_prod,
-        cobrado_ctdo,
-        cobrado_ccte
-      FROM soda_hoja_completa
-      WHERE cod_rep = ? AND YEAR(fecha) = ? AND MONTH(fecha) = ?
-    ) AS subquery
-    GROUP BY fecha, cod_zona
-    ORDER BY fecha ASC
+    SELECT
+      rf.fecha,
+      rf.zona,
+      SUM(rf.cobrado_ctdo_A4) AS cobrado_ctdo_A4,
+      SUM(rf.cobrado_ctdo_A3) AS cobrado_ctdo_A3,
+      SUM(rf.cobrado_ccte_A4) AS cobrado_ccte_A4,
+      SUM(rf.cobrado_ccte_A3) AS cobrado_ccte_A3
+    FROM resultadofinales rf
+    WHERE rf.cod_rep = ? AND YEAR(rf.fecha) = ? AND MONTH(rf.fecha) = ?
+    GROUP BY rf.fecha, rf.zona
+    ORDER BY rf.fecha ASC
   `;
 
   const preciosQuery = `
@@ -376,14 +332,11 @@ app.post('/ventas-mensuales', async (req, res) => {
     WHERE cod_prod IN ('A3', 'A4')
   `;
 
-  let connection;
   try {
-    connection = await createDBConnection();
-
     // Ejecutar consultas en paralelo
     const [ventasMensuales, preciosData] = await Promise.all([
-      connection.execute(ventasMensualesQuery, [cod_rep, añoActual, mesActual]),
-      connection.execute(preciosQuery),
+      pool.execute(ventasMensualesQuery, [cod_rep, añoActual, mesActual]),
+      pool.execute(preciosQuery)
     ]);
 
     const ventasData = ventasMensuales[0];
@@ -391,12 +344,12 @@ app.post('/ventas-mensuales', async (req, res) => {
 
     // Crear un mapa de precios para fácil acceso
     const preciosMap = {};
-    precios.forEach((item) => {
+    precios.forEach(item => {
       preciosMap[item.cod_prod] = parseFloat(item.precio);
     });
 
     // Calcular los montos en pesos y preparar los datos
-    const ventasConPesos = ventasData.map((venta) => {
+    const ventasConPesos = ventasData.map(venta => {
       const cobrado_ctdo_A4_pesos = (venta.cobrado_ctdo_A4 || 0) * (preciosMap['A4'] || 0);
       const cobrado_ctdo_A3_pesos = (venta.cobrado_ctdo_A3 || 0) * (preciosMap['A3'] || 0);
       const cobrado_ccte_A4_pesos = (venta.cobrado_ccte_A4 || 0) * (preciosMap['A4'] || 0);
@@ -418,7 +371,7 @@ app.post('/ventas-mensuales', async (req, res) => {
     let totalCobradoCcte_A4 = 0;
     let totalCobradoCcte_A3 = 0;
 
-    ventasConPesos.forEach((venta) => {
+    ventasConPesos.forEach(venta => {
       totalCobradoCtdo_A4 += venta.cobrado_ctdo_A4_pesos;
       totalCobradoCtdo_A3 += venta.cobrado_ctdo_A3_pesos;
       totalCobradoCcte_A4 += venta.cobrado_ccte_A4_pesos;
@@ -435,16 +388,13 @@ app.post('/ventas-mensuales', async (req, res) => {
         cobrado_ctdo_A3_pesos: totalCobradoCtdo_A3,
         cobrado_ccte_A4_pesos: totalCobradoCcte_A4,
         cobrado_ccte_A3_pesos: totalCobradoCcte_A3,
-        total_general: totalGeneral,
-      },
+        total_general: totalGeneral
+      }
     });
+
   } catch (err) {
     console.error('Error ejecutando las consultas:', err);
     res.status(500).json({ success: false, error: 'Error al obtener ventas mensuales' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
   }
 });
 
@@ -465,30 +415,29 @@ app.post('/movimientos', async (req, res) => {
     WHERE cod_cliente = ?
   `;
 
-  let connection;
   try {
-    connection = await createDBConnection();
-    const [results] = await connection.execute(query, [cod_cliente]);
+    const [results] = await pool.execute(query, [cod_cliente]);
     res.json({ success: true, movimientos: results });
   } catch (err) {
     console.error('Error ejecutando query:', err);
     res.status(500).json({ success: false, message: 'Error en la base de datos' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
   }
 });
 
+// app.js (o donde tengas tus rutas)
 app.post('/update-movimientos-y-resultados', async (req, res) => {
-  const { cod_cliente, cod_prod, venta, cobrado_ctdo, cobrado_ccte, cod_rep, zona, bidones_bajados, motivo } = req.body;
-
-  // 🔹 Ajuste de la fecha a UTC-3 en Node.js
-  const fechaArgentina = new Date();
-  fechaArgentina.setHours(fechaArgentina.getHours() - 3);
-  const fecha = fechaArgentina.toISOString().split('T')[0]; // Fecha corregida
-
-  console.log(`Fecha a registrar: ${fecha}`); // 🔍 Para verificar que la fecha es correcta
+  const {
+    cod_cliente,
+    cod_prod,
+    venta,
+    cobrado_ctdo,
+    cobrado_ccte,
+    cod_rep,
+    zona,
+    bidones_bajados,
+    motivo,
+    fecha  // asegúrate de recibir también la fecha de la línea si la necesitas
+  } = req.body;
 
   // Validaciones básicas
   if (
@@ -499,147 +448,115 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     cobrado_ccte === undefined ||
     !cod_rep ||
     !zona ||
-    bidones_bajados === undefined ||
-    !fecha
+    bidones_bajados === undefined
   ) {
     return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
   }
 
-  // Consultas SQL
+  // Consultas
   const updateMovimientosQuery = `
     UPDATE soda_hoja_linea
     SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
     WHERE cod_cliente = ? AND cod_prod = ?
   `;
 
-  const checkQuery = `
-    SELECT COUNT(*) AS count
-    FROM resultadofinales
-    WHERE cod_rep = ? AND fecha = ? AND zona = ?
-  `;
-
-  let upsertQuery = '';
-  let values = [];
-
-  // 🔹 Definir la consulta según el tipo de producto
+  // Insert/Upsert en resultadofinales según A4/A3 (igual que antes)...
+  let upsertQuery, upsertValues;
   if (cod_prod === 'A4') {
     upsertQuery = `
-      INSERT INTO resultadofinales (cod_rep, fecha, zona, venta_A4, cobrado_ctdo_A4, cobrado_ccte_A4)
+      INSERT INTO resultadofinales
+        (cod_rep, fecha, zona, venta_A4, cobrado_ctdo_A4, cobrado_ccte_A4)
       VALUES (?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         venta_A4 = venta_A4 + VALUES(venta_A4),
         cobrado_ctdo_A4 = cobrado_ctdo_A4 + VALUES(cobrado_ctdo_A4),
         cobrado_ccte_A4 = cobrado_ccte_A4 + VALUES(cobrado_ccte_A4)
     `;
-    values = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
+    upsertValues = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
   } else if (cod_prod === 'A3') {
     upsertQuery = `
-      INSERT INTO resultadofinales (cod_rep, fecha, zona, venta_A3, cobrado_ctdo_A3, cobrado_ccte_A3)
+      INSERT INTO resultadofinales
+        (cod_rep, fecha, zona, venta_A3, cobrado_ctdo_A3, cobrado_ccte_A3)
       VALUES (?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         venta_A3 = venta_A3 + VALUES(venta_A3),
         cobrado_ctdo_A3 = cobrado_ctdo_A3 + VALUES(cobrado_ctdo_A3),
         cobrado_ccte_A3 = cobrado_ccte_A3 + VALUES(cobrado_ccte_A3)
     `;
-    values = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
+    upsertValues = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
   } else {
     return res.json({ success: false, error: 'Producto desconocido' });
   }
 
   let connection;
-
   try {
-    connection = await createDBConnection();
-    await connection.beginTransaction(); // Iniciar transacción
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
 
-    // 🔹 Actualizar movimientos
-    const [updateResult] = await connection.execute(updateMovimientosQuery, [venta, cobrado_ctdo, cobrado_ccte, cod_cliente, cod_prod]);
-
-    if (updateResult.affectedRows === 0) {
-      throw new Error('No se encontró el registro para actualizar en soda_hoja_linea');
+    // 1) Actualizar soda_hoja_linea
+    const [upd] = await connection.execute(updateMovimientosQuery, [
+      venta,
+      cobrado_ctdo,
+      cobrado_ccte,
+      cod_cliente,
+      cod_prod
+    ]);
+    if (upd.affectedRows === 0) {
+      throw new Error('No se encontró registro en soda_hoja_linea');
     }
 
-    // 🔹 Verificar si ya existe el registro en resultadofinales
-    const [checkResult] = await connection.execute(checkQuery, [cod_rep, fecha, zona]);
-    const count = checkResult[0].count;
+    // 2) Upsert en resultadofinales
+    await connection.execute(upsertQuery, upsertValues);
 
-    // 🔹 Insertar o actualizar en resultadofinales
-    const [upsertResult] = await connection.execute(upsertQuery, values);
+    // 3) Marcar ter en header
+    await connection.execute(
+      `UPDATE soda_hoja_header SET ter = 1 WHERE cod_cliente = ?`,
+      [cod_cliente]
+    );
 
-    // 🔹 Actualizar el campo 'ter' en soda_hoja_header
-    const updateTerQuery = `UPDATE soda_hoja_header SET ter = 1 WHERE cod_cliente = ?`;
-    await connection.execute(updateTerQuery, [cod_cliente]);
+    // 4) **Obtener el valor real de 'debe'**
+    const [debeRows] = await connection.execute(
+      `SELECT debe FROM soda_hoja_linea WHERE cod_cliente = ? AND cod_prod = ?`,
+      [cod_cliente, cod_prod]
+    );
+    if (debeRows.length === 0) {
+      throw new Error('No se encontró el campo debe en soda_hoja_linea');
+    }
+    const debeValue = debeRows[0].debe;
 
-    // 🔹 Insertar en soda_hoja_completa con la fecha corregida en MySQL también
+    // 5) Insertar en soda_hoja_completa usando el debe real
+    const fecha_actual = new Date().toISOString().split('T')[0];
     const insertCompletaQuery = `
-      INSERT INTO soda_hoja_completa (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, fecha, motivo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CONVERT_TZ(NOW(), '+00:00', '-03:00'), ?);
+      INSERT INTO soda_hoja_completa
+        (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, fecha, motivo)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-
-    // 🔹 Definir valores
-    const orden = 0;
-    const debe = 0;
-
+    const orden = 0; // ajusta si necesitas otro orden
     await connection.execute(insertCompletaQuery, [
       cod_rep,
       zona,
       orden,
       cod_cliente,
       cod_prod,
-      debe,
+      debeValue,         // <-- aquí va el debe real
       venta,
       cobrado_ctdo,
       cobrado_ccte,
       bidones_bajados,
+      fecha_actual,
       motivo || null
     ]);
 
-    await connection.commit(); // Confirmar transacción
-
+    await connection.commit();
     res.json({ success: true });
   } catch (err) {
-    if (connection) {
-      await connection.rollback(); // Deshacer cambios en caso de error
-    }
-    console.error('Error ejecutando consulta:', err);
+    if (connection) await connection.rollback();
+    console.error('Error en update-movimientos-y-resultados:', err);
     res.json({ success: false, error: err.message });
   } finally {
-    if (connection) {
-      await connection.end(); // Cerrar la conexión
-    }
+    if (connection) connection.release();
   }
 });
-
-
-
-app.post('/crear-cliente', async (req, res) => {
-  const { razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia } = req.body;
-
-  if (!razon || !localidad || !celular || !bidon || !cantidad || !numzona || !secuencia) {
-    return res.status(400).json({ success: false, message: 'Todos los campos son obligatorios.' });
-  }
-
-const insertClienteQuery = `
-  INSERT INTO clientenuevo (razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-`;
-
-  let connection;
-  try {
-    connection = await createDBConnection();
-    await connection.execute(insertClienteQuery, [razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia]);
-    res.json({ success: true, message: 'Cliente creado exitosamente' });
-  } catch (error) {
-    console.error('Error creando cliente:', error);
-    res.status(500).json({ success: false, message: 'Error al crear el cliente' });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
-  }
-});
-
-
 
 // Ruta para modificar la visita usando async/await
 app.post('/modificar-visita', async (req, res) => {
@@ -653,76 +570,83 @@ app.post('/modificar-visita', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos' });
   }
 
-  let connection;
   try {
-    // Obtener conexión usando createDBConnection
-    connection = await createDBConnection();
-    await connection.beginTransaction();
-    console.log("Transacción iniciada");
+    // Obtener conexión (pool ya es basado en promesas, no se usa pool.promise())
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      console.log("Transacción iniciada");
 
-    // Actualizar en soda_hoja_linea:
-    // Se verifica por: cod_rep, cod_zona, cod_cliente y cod_prod
-    const updateLineaQuery = `
-      UPDATE soda_hoja_linea
-      SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
-      WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ?
-    `;
-    const lineaParams = [venta, cobrado_ctdo, cobrado_ccte, cod_rep, cod_zona, cod_cliente, cod_prod];
-    console.log("Parámetros updateLineaQuery:", lineaParams);
-    const [lineaResult] = await connection.execute(updateLineaQuery, lineaParams);
-    console.log("Resultado updateLineaQuery:", lineaResult);
+      // Actualizar en soda_hoja_linea:
+      // Se verifica por: cod_rep, cod_zona, cod_cliente y cod_prod
+      const updateLineaQuery = `
+        UPDATE soda_hoja_linea
+        SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
+        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ?
+      `;
+      const lineaParams = [venta, cobrado_ctdo, cobrado_ccte, cod_rep, cod_zona, cod_cliente, cod_prod];
+      console.log("Parámetros updateLineaQuery:", lineaParams);
+      const [lineaResult] = await connection.execute(updateLineaQuery, lineaParams);
+      console.log("Resultado updateLineaQuery:", lineaResult);
 
-    // Actualizar en soda_hoja_completa:
-    // Se verifica por: cod_rep, cod_zona, cod_cliente, cod_prod y fecha
-    const updateCompletaQuery = `
-      UPDATE soda_hoja_completa
-      SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?, bidones_bajados = ?, motivo = ?
-      WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ? AND fecha = ?
-    `;
-    const completaParams = [venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, motivo, cod_rep, cod_zona, cod_cliente, cod_prod, fecha];
-    console.log("Parámetros updateCompletaQuery:", completaParams);
-    const [completaResult] = await connection.execute(updateCompletaQuery, completaParams);
-    console.log("Resultado updateCompletaQuery:", completaResult);
+      // Actualizar en soda_hoja_completa:
+      // Se verifica por: cod_rep, cod_zona, cod_cliente, cod_prod y fecha
+      const updateCompletaQuery = `
+        UPDATE soda_hoja_completa
+        SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?, bidones_bajados = ?, motivo = ?
+        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ? AND fecha = ?
+      `;
+      const completaParams = [venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, motivo, cod_rep, cod_zona, cod_cliente, cod_prod, fecha];
+      console.log("Parámetros updateCompletaQuery:", completaParams);
+      const [completaResult] = await connection.execute(updateCompletaQuery, completaParams);
+      console.log("Resultado updateCompletaQuery:", completaResult);
 
-    await connection.commit();
-    console.log("Transacción confirmada");
-    res.json({ success: true });
-  } catch (err) {
-    if (connection) {
+      await connection.commit();
+      console.log("Transacción confirmada");
+      connection.release();
+      res.json({ success: true });
+    } catch (err) {
       await connection.rollback();
-      console.error("Error en la transacción:", err);
+      connection.release();
+      console.error('Error en la transacción:', err);
+      res.status(500).json({ success: false, error: 'Error al actualizar los registros' });
     }
-    res.status(500).json({ success: false, error: 'Error al actualizar los registros: ' + err.message });
-  } finally {
-    if (connection) {
-      await connection.end();
-    }
+  } catch (err) {
+    console.error('Error obteniendo conexión:', err);
+    res.status(500).json({ success: false, error: 'Error al obtener conexión a la base de datos' });
   }
 });
 
-// Ruta para obtener movimientos de clientes basados en fecha, zona y repartidor
+
 app.post('/movimientos-clientes', async (req, res) => {
   const { fecha, numzona, cod_rep } = req.body;
-
   console.log(`Recibido: fecha=${fecha}, numzona=${numzona}, cod_rep=${cod_rep}`);
 
-  // Validación de parámetros
   if (!fecha || !numzona || !cod_rep) {
-    return res.status(400).json({ success: false, message: 'fecha, numzona y cod_rep son requeridos' });
+    return res
+      .status(400)
+      .json({ success: false, message: 'fecha, numzona y cod_rep son requeridos' });
   }
 
-  // Consultas SQL
+  // 1) Obtener clientes que efectivamente tienen movimientos
   const clientesQuery = `
-    SELECT DISTINCT shh.cod_cliente, shh.nom_cliente, shh.domicilio, shh.localidad, shh.celular
-    FROM soda_hoja_header shh
-    INNER JOIN soda_hoja_completa shc ON shh.cod_cliente = shc.cod_cliente
-    WHERE shh.cod_zona = ? 
-      AND shc.cod_rep = ?
-      AND DATE(shc.fecha) = ?
-      AND shh.ter = 1
+    SELECT DISTINCT 
+      shh.cod_cliente,
+      shh.nom_cliente,
+      shh.domicilio,
+      shh.localidad,
+      shh.celular
+    FROM soda_hoja_header AS shh
+    INNER JOIN soda_hoja_completa AS shc
+      ON shh.cod_cliente = shc.cod_cliente
+      AND shc.cod_rep   = ?
+      AND shc.cod_zona  = ?
+      AND DATE(shc.fecha) = STR_TO_DATE(?, '%Y-%m-%d')
+    WHERE shh.cod_zona = ?
     ORDER BY shh.secuencia ASC
   `;
 
+  // 2) Obtener todos los movimientos de esos clientes
   const movimientosQuery = `
     SELECT 
       shc.cod_cliente,
@@ -732,72 +656,238 @@ app.post('/movimientos-clientes', async (req, res) => {
       shc.cobrado_ctdo,
       shc.cobrado_ccte,
       shc.bidones_bajados,
-      DATE(shc.fecha) as fecha,
+      DATE(shc.fecha) AS fecha,
       shc.motivo
-    FROM soda_hoja_completa shc
-    WHERE shc.cod_rep = ?
-      AND shc.cod_zona = ?
-      AND DATE(shc.fecha) = ?
+    FROM soda_hoja_completa AS shc
+    WHERE shc.cod_rep   = ?
+      AND shc.cod_zona  = ?
+      AND DATE(shc.fecha) = STR_TO_DATE(?, '%Y-%m-%d')
       AND shc.cod_cliente IN (
-        SELECT cod_cliente 
-        FROM soda_hoja_header 
-        WHERE cod_zona = ? AND ter = 1
+        SELECT cod_cliente
+        FROM soda_hoja_header
+        WHERE cod_zona = ?
       )
     ORDER BY shc.fecha DESC, shc.orden ASC
+  `;
+
+  try {
+    // Ejecutar query de clientes
+    const [clientes] = await pool.execute(clientesQuery, [
+      cod_rep,
+      numzona,
+      fecha,
+      numzona
+    ]);
+    console.log(`Clientes obtenidos: ${clientes.length}`);
+    if (clientes.length === 0) {
+      return res.json({ success: true, clientes: [] });
+    }
+
+    // Ejecutar query de movimientos
+    const [movimientos] = await pool.execute(movimientosQuery, [
+      cod_rep,
+      numzona,
+      fecha,
+      numzona
+    ]);
+    console.log(`Movimientos obtenidos: ${movimientos.length}`);
+
+    // Agrupar movimientos por cliente
+    const movPorCliente = movimientos.reduce((acc, m) => {
+      if (!acc[m.cod_cliente]) acc[m.cod_cliente] = [];
+      acc[m.cod_cliente].push({
+        cod_prod:        m.cod_prod,
+        debe:            m.debe,
+        venta:           m.venta,
+        cobrado_ctdo:    m.cobrado_ctdo,
+        cobrado_ccte:    m.cobrado_ccte,
+        bidones_bajados: m.bidones_bajados,
+        fecha:           m.fecha,
+        motivo:          m.motivo
+      });
+      return acc;
+    }, {});
+
+    // Construir respuesta final
+    const clientesConMov = clientes.map(c => ({
+      ...c,
+      movimientos: movPorCliente[c.cod_cliente] || []
+    }));
+
+    console.log(`Clientes con Movimientos: ${clientesConMov.length}`);
+    res.json({ success: true, clientes: clientesConMov });
+  } catch (err) {
+    console.error('Error en /movimientos-clientes:', err);
+    res
+      .status(500)
+      .json({ success: false, message: 'Error al obtener movimientos de clientes' });
+  }
+});
+
+app.post('/crear-cliente', async (req, res) => {
+  const { razon, localidad, celular, bidon, cantidad, numzona, secuencia } = req.body;
+
+  if (!razon || !localidad || !celular || !bidon || !cantidad || !numzona || !secuencia) {
+    return res.status(400).json({ success: false, message: 'Todos los campos son obligatorios.' });
+  }
+
+  const insertClienteQuery = `
+    INSERT INTO clientenuevo (razon, localidad, celular, bidon, cantidad, numzona, secuencia)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `;
 
   let connection;
   try {
     connection = await createDBConnection();
-
-    // Obtener clientes visitados
-    const [clientes] = await connection.execute(clientesQuery, [numzona, cod_rep, fecha]);
-    console.log(`Clientes obtenidos: ${clientes.length}`);
-
-    if (clientes.length === 0) {
-      return res.json({ success: true, clientes: [] });
-    }
-
-    // Obtener movimientos para los clientes visitados
-    const [movimientos] = await connection.execute(movimientosQuery, [cod_rep, numzona, fecha, numzona]);
-    console.log(`Movimientos obtenidos: ${movimientos.length}`);
-
-    // Agrupar movimientos por cliente
-    const movimientosPorCliente = movimientos.reduce((acc, movimiento) => {
-      if (!acc[movimiento.cod_cliente]) {
-        acc[movimiento.cod_cliente] = [];
-      }
-      acc[movimiento.cod_cliente].push({
-        cod_prod: movimiento.cod_prod,
-        debe: movimiento.debe,
-        venta: movimiento.venta,
-        cobrado_ctdo: movimiento.cobrado_ctdo,
-        cobrado_ccte: movimiento.cobrado_ccte,
-        bidones_bajados: movimiento.bidones_bajados,
-        fecha: movimiento.fecha,
-        motivo: movimiento.motivo
-      });
-      return acc;
-    }, {});
-
-    // Preparar la respuesta
-    const clientesConMovimientos = clientes.map(cliente => ({
-      ...cliente,
-      movimientos: movimientosPorCliente[cliente.cod_cliente] || []
-    }));
-
-    console.log(`Clientes con Movimientos: ${clientesConMovimientos.length}`);
-
-    res.json({ success: true, clientes: clientesConMovimientos });
+    await connection.execute(insertClienteQuery, [razon, localidad, celular, bidon, cantidad, numzona, secuencia]);
+    res.json({ success: true, message: 'Cliente creado exitosamente' });
   } catch (error) {
-    console.error('Error en /movimientos-clientes:', error);
-    res.status(500).json({ success: false, message: 'Error al obtener movimientos de clientes' });
+    console.error('Error creando cliente:', error);
+    res.status(500).json({ success: false, message: 'Error al crear el cliente' });
   } finally {
     if (connection) {
       await connection.end();
     }
   }
 });
+// Ruta de Carga y descarga de camión
+// En tu app.js de Express (o donde tengas tus rutas)
+
+// POST /soda_cardes (inserta carga/descarga)
+app.post('/soda_cardes', async (req, res) => {
+  const { fecha, cod_rep, cod_prod, cod_zona, cantidad, movimiento } = req.body;
+
+  if (!fecha || !cod_rep || !cod_prod || !cod_zona || !cantidad || !movimiento) {
+    return res
+      .status(400)
+      .json({ success: false, message: 'Todos los campos son requeridos' });
+  }
+
+  const query = `
+    INSERT INTO soda_cardes
+      (fecha, cod_rep, cod_prod, cod_zona, cantidad, movimiento)
+    VALUES
+      (STR_TO_DATE(?, '%d/%m/%Y'), ?, ?, ?, ?, ?)
+  `;
+
+  try {
+    const result = await executeQueryWithRetry(query, [
+      fecha, cod_rep, cod_prod, cod_zona, cantidad, movimiento
+    ]);
+    res.json({ success: true, insertId: result.insertId });
+  } catch (err) {
+    console.error('Error al insertar en soda_cardes:', err);
+    res
+      .status(500)
+      .json({ success: false, message: 'Error en la base de datos' });
+  }
+});
+
+// GET /soda_cardes?cod_rep=2&fecha=14/04/2025
+app.get('/soda_cardes', async (req, res) => {
+  const { cod_rep, fecha } = req.query;
+  if (!cod_rep || !fecha) {
+    return res
+      .status(400)
+      .json({ success: false, message: 'cod_rep y fecha son requeridos' });
+  }
+
+  const query = `
+    SELECT 
+      cod_prod, cod_zona, cantidad,
+      movimiento,
+      DATE_FORMAT(fecha, '%d/%m/%Y') AS fecha
+    FROM soda_cardes
+    WHERE cod_rep = ?
+      AND fecha = STR_TO_DATE(?, '%d/%m/%Y')
+    ORDER BY cod_prod
+  `;
+
+  try {
+    const rows = await executeQueryWithRetry(query, [cod_rep, fecha]);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('Error al leer soda_cardes:', err);
+    res
+      .status(500)
+      .json({ success: false, message: 'Error en la base de datos' });
+  }
+});
+
+// POST /procesar_stock
+app.post('/procesar_stock', async (req, res) => {
+  const { fecha, cod_rep, cod_zona } = req.body;
+  if (!fecha || !cod_rep || !cod_zona) {
+    return res
+      .status(400)
+      .json({ success: false, message: 'fecha, cod_rep y cod_zona son requeridos' });
+  }
+
+  try {
+    // 1) Sumar ventas del día para ese rep y zona
+    const sumQuery = `
+      SELECT IFNULL(SUM(venta), 0) AS totalVenta
+      FROM soda_hoja_completa
+      WHERE cod_rep = ?
+        AND cod_zona = ?
+        AND fecha = STR_TO_DATE(?, '%d/%m/%Y')
+    `;
+    const [ { totalVenta } ] = await executeQueryWithRetry(sumQuery, [
+      cod_rep, cod_zona, fecha
+    ]);
+
+    // 2) Obtener el stock principal (último registro anterior a la fecha)
+    const stockQuery = `
+      SELECT fecha, tapas, bidon_a4, bidon_a3, bases
+      FROM soda_stock
+      WHERE fecha < STR_TO_DATE(?, '%d/%m/%Y')
+      ORDER BY fecha DESC
+      LIMIT 1
+    `;
+    const rows = await executeQueryWithRetry(stockQuery, [fecha]);
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: 'No hay stock previo para procesar' });
+    }
+    const principal = rows[0];
+
+    // 3) Calcular nuevo stock de tapas
+    const nuevoTaps = principal.tapas - totalVenta;
+
+    // 4) Insertar el nuevo registro de stock
+    const insertQuery = `
+      INSERT INTO soda_stock
+        (fecha, tapas, bidon_a4, bidon_a3, bases)
+      VALUES
+        (STR_TO_DATE(?, '%d/%m/%Y'), ?, ?, ?, ?)
+    `;
+    await executeQueryWithRetry(insertQuery, [
+      fecha,
+      nuevoTaps,
+      principal.bidon_a4,
+      principal.bidon_a3,
+      principal.bases
+    ]);
+
+    res.json({
+      success: true,
+      newStock: {
+        fecha,
+        tapas: nuevoTaps,
+        bidon_a4: principal.bidon_a4,
+        bidon_a3: principal.bidon_a3,
+        bases: principal.bases
+      }
+    });
+  } catch (err) {
+    console.error('Error procesando stock:', err);
+    res
+      .status(500)
+      .json({ success: false, message: 'Error en la base de datos' });
+  }
+});
+
 
 // Middleware de Manejo de Errores
 app.use((err, req, res, next) => {
@@ -806,6 +896,7 @@ app.use((err, req, res, next) => {
 });
 
 // Iniciar el servidor
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en el puerto ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+

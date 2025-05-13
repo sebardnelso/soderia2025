@@ -312,6 +312,10 @@ app.post('/resultados-del-dia', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Error al obtener resultados del día' });
   }
 });
+
+
+
+
 // Ruta para obtener ventas mensuales agrupadas por fecha y zona
 app.post('/ventas-mensuales', async (req, res) => {
   const { cod_rep } = req.body;
@@ -414,7 +418,7 @@ app.post('/ventas-mensuales', async (req, res) => {
   }
 });
 
-// Ruta para obtener movimientos
+// Ruta modificada: POST /movimientos
 app.post('/movimientos', async (req, res) => {
   const { cod_cliente, cod_rep, numzona } = req.body;
   console.log(`Recibido cod_cliente: ${cod_cliente}`);
@@ -422,25 +426,46 @@ app.post('/movimientos', async (req, res) => {
   console.log(`Recibido numzona: ${numzona}`);
 
   if (!cod_cliente || !cod_rep || !numzona) {
-    return res.status(400).json({ success: false, message: 'cod_cliente, cod_rep y numzona son requeridos' });
+    return res
+      .status(400)
+      .json({ success: false, message: 'cod_cliente, cod_rep y numzona son requeridos' });
   }
 
   const query = `
-    SELECT cod_prod, cod_cliente, debe, venta, cobrado_ctdo, cobrado_ccte
-    FROM soda_hoja_linea
-    WHERE cod_cliente = ?
+    SELECT 
+      l.cod_prod,
+      l.cod_cliente,
+      -- Aquí reemplazamos l.debe por el saldo oficial según el producto
+      CASE 
+        WHEN l.cod_prod = 'A4' THEN h.saldiA4
+        WHEN l.cod_prod = 'A3' THEN h.saldiA3
+        ELSE l.debe
+      END AS debe,
+      l.venta,
+      l.cobrado_ctdo,
+      l.cobrado_ccte
+    FROM soda_hoja_linea AS l
+    JOIN soda_hoja_header AS h
+      ON l.cod_cliente = h.cod_cliente
+    WHERE l.cod_cliente = ?
+      AND l.cod_rep    = ?
+      AND l.cod_zona   = ?
   `;
 
   try {
-    const [results] = await pool.execute(query, [cod_cliente]);
+    const [results] = await pool.execute(query, [cod_cliente, cod_rep, numzona]);
     res.json({ success: true, movimientos: results });
   } catch (err) {
-    console.error('Error ejecutando query:', err);
+    console.error('Error ejecutando query en /movimientos:', err);
     res.status(500).json({ success: false, message: 'Error en la base de datos' });
   }
 });
 
+
 // app.js (o donde tengas tus rutas)
+// POST /update-movimientos-y-resultados
+// Ruta completa: POST /update-movimientos-y-resultados
+// POST /update-movimientos-y-resultados
 app.post('/update-movimientos-y-resultados', async (req, res) => {
   const {
     cod_cliente,
@@ -452,10 +477,9 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     zona,
     bidones_bajados,
     motivo,
-    fecha  // asegúrate de recibir también la fecha de la línea si la necesitas
+    fecha // opcional
   } = req.body;
 
-  // Validaciones básicas
   if (
     !cod_cliente ||
     !cod_prod ||
@@ -469,60 +493,46 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
   }
 
-  // Consultas
-  const updateMovimientosQuery = `
-    UPDATE soda_hoja_linea
-    SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
-    WHERE cod_cliente = ? AND cod_prod = ?
-  `;
-
-  // Insert/Upsert en resultadofinales según A4/A3 (igual que antes)...
-  let upsertQuery, upsertValues;
-  if (cod_prod === 'A4') {
-    upsertQuery = `
-      INSERT INTO resultadofinales
-        (cod_rep, fecha, zona, venta_A4, cobrado_ctdo_A4, cobrado_ccte_A4)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        venta_A4 = venta_A4 + VALUES(venta_A4),
-        cobrado_ctdo_A4 = cobrado_ctdo_A4 + VALUES(cobrado_ctdo_A4),
-        cobrado_ccte_A4 = cobrado_ccte_A4 + VALUES(cobrado_ccte_A4)
-    `;
-    upsertValues = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
-  } else if (cod_prod === 'A3') {
-    upsertQuery = `
-      INSERT INTO resultadofinales
-        (cod_rep, fecha, zona, venta_A3, cobrado_ctdo_A3, cobrado_ccte_A3)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        venta_A3 = venta_A3 + VALUES(venta_A3),
-        cobrado_ctdo_A3 = cobrado_ctdo_A3 + VALUES(cobrado_ctdo_A3),
-        cobrado_ccte_A3 = cobrado_ccte_A3 + VALUES(cobrado_ccte_A3)
-    `;
-    upsertValues = [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte];
-  } else {
-    return res.json({ success: false, error: 'Producto desconocido' });
-  }
-
   let connection;
   try {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
     // 1) Actualizar soda_hoja_linea
-    const [upd] = await connection.execute(updateMovimientosQuery, [
-      venta,
-      cobrado_ctdo,
-      cobrado_ccte,
-      cod_cliente,
-      cod_prod
-    ]);
+    const [upd] = await connection.execute(
+      `UPDATE soda_hoja_linea
+         SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
+       WHERE cod_cliente = ? AND cod_prod = ?`,
+      [venta, cobrado_ctdo, cobrado_ccte, cod_cliente, cod_prod]
+    );
     if (upd.affectedRows === 0) {
       throw new Error('No se encontró registro en soda_hoja_linea');
     }
 
-    // 2) Upsert en resultadofinales
-    await connection.execute(upsertQuery, upsertValues);
+    // 2) Upsert en resultadofinales (igual que antes)
+    let upsertQuery;
+    if (cod_prod === 'A4') {
+      upsertQuery = `
+        INSERT INTO resultadofinales
+          (cod_rep, fecha, zona, venta_A4, cobrado_ctdo_A4, cobrado_ccte_A4)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          venta_A4 = venta_A4 + VALUES(venta_A4),
+          cobrado_ctdo_A4 = cobrado_ctdo_A4 + VALUES(cobrado_ctdo_A4),
+          cobrado_ccte_A4 = cobrado_ccte_A4 + VALUES(cobrado_ccte_A4)
+      `;
+    } else {
+      upsertQuery = `
+        INSERT INTO resultadofinales
+          (cod_rep, fecha, zona, venta_A3, cobrado_ctdo_A3, cobrado_ccte_A3)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          venta_A3 = venta_A3 + VALUES(venta_A3),
+          cobrado_ctdo_A3 = cobrado_ctdo_A3 + VALUES(cobrado_ctdo_A3),
+          cobrado_ccte_A3 = cobrado_ccte_A3 + VALUES(cobrado_ccte_A3)
+      `;
+    }
+    await connection.execute(upsertQuery, [cod_rep, fecha, zona, venta, cobrado_ctdo, cobrado_ccte]);
 
     // 3) Marcar ter en header
     await connection.execute(
@@ -530,31 +540,31 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
       [cod_cliente]
     );
 
-    // 4) **Obtener el valor real de 'debe'**
-    const [debeRows] = await connection.execute(
-      `SELECT debe FROM soda_hoja_linea WHERE cod_cliente = ? AND cod_prod = ?`,
-      [cod_cliente, cod_prod]
+    // 4) Obtener el "debe oficial" desde la cabecera
+    const campoHeader = cod_prod === 'A4' ? 'saldiA4' : 'saldiA3';
+    const [headerRows] = await connection.execute(
+      `SELECT ${campoHeader} AS debe FROM soda_hoja_header WHERE cod_cliente = ?`,
+      [cod_cliente]
     );
-    if (debeRows.length === 0) {
-      throw new Error('No se encontró el campo debe en soda_hoja_linea');
-    }
-    const debeValue = debeRows[0].debe;
+    const debeValue = headerRows[0]?.debe ?? 0;
 
-    // 5) Insertar en soda_hoja_completa usando el debe real
+    // 5) Insertar en soda_hoja_completa usando el debe de header
     const fecha_actual = new Date().toISOString().split('T')[0];
     const insertCompletaQuery = `
       INSERT INTO soda_hoja_completa
-        (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, fecha, motivo)
+        (cod_rep, cod_zona, orden, cod_cliente, cod_prod,
+         debe, venta, cobrado_ctdo, cobrado_ccte,
+         bidones_bajados, fecha, motivo)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    const orden = 0; // ajusta si necesitas otro orden
+    const orden = 0;
     await connection.execute(insertCompletaQuery, [
       cod_rep,
       zona,
       orden,
       cod_cliente,
       cod_prod,
-      debeValue,         // <-- aquí va el debe real
+      debeValue,     // ← aquí el saldo oficial
       venta,
       cobrado_ctdo,
       cobrado_ccte,
@@ -563,18 +573,29 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
       motivo || null
     ]);
 
+    // 6) Cálculo de neto y actualización de la cabecera
+    const neto = Number(venta) - Number(cobrado_ctdo) - Number(cobrado_ccte);
+    await connection.execute(
+      `UPDATE soda_hoja_header
+         SET ${campoHeader} = ${campoHeader} + ?
+       WHERE cod_cliente = ?`,
+      [neto, cod_cliente]
+    );
+
     await connection.commit();
     res.json({ success: true });
   } catch (err) {
     if (connection) await connection.rollback();
-    console.error('Error en update-movimientos-y-resultados:', err);
-    res.json({ success: false, error: err.message });
+    console.error('Error en /update-movimientos-y-resultados:', err);
+    res.status(500).json({ success: false, error: err.message });
   } finally {
     if (connection) connection.release();
   }
 });
 
-// Ruta para modificar la visita usando async/await
+
+
+// Ruta completa: POST /modificar-visita
 app.post('/modificar-visita', async (req, res) => {
   // Se esperan cod_zona, cod_rep, cod_cliente, cod_prod y fecha, además de los datos a actualizar
   const { cod_zona, cod_rep, cod_cliente, cod_prod, fecha, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, motivo } = req.body;
@@ -632,6 +653,9 @@ app.post('/modificar-visita', async (req, res) => {
     res.status(500).json({ success: false, error: 'Error al obtener conexión a la base de datos' });
   }
 });
+
+
+
 
 
 app.post('/movimientos-clientes', async (req, res) => {

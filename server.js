@@ -480,63 +480,98 @@ app.post('/update-movimientos-y-resultados', async (req, res) => {
 
 // Ruta completa: POST /modificar-visita
 app.post('/modificar-visita', async (req, res) => {
-  // Se esperan cod_zona, cod_rep, cod_cliente, cod_prod y fecha, además de los datos a actualizar
   const { cod_zona, cod_rep, cod_cliente, cod_prod, fecha, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, motivo } = req.body;
 
-  console.log("Datos recibidos:", req.body);
+  console.log("📥 Datos recibidos:", req.body);
 
   if (!cod_zona || !cod_rep || !cod_cliente || !cod_prod || !fecha) {
-    console.error("Faltan parámetros requeridos");
+    console.error("❌ Faltan parámetros requeridos");
     return res.status(400).json({ success: false, error: 'Faltan parámetros requeridos' });
   }
 
+  const hoy = new Date().toISOString().split('T')[0];
+
   try {
-    // Obtener conexión (pool ya es basado en promesas, no se usa pool.promise())
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      console.log("Transacción iniciada");
 
-      // Actualizar en soda_hoja_linea:
-      // Se verifica por: cod_rep, cod_zona, cod_cliente y cod_prod
-      const updateLineaQuery = `
-        UPDATE soda_hoja_linea
-        SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?
-        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ?
-      `;
-      const lineaParams = [venta, cobrado_ctdo, cobrado_ccte, cod_rep, cod_zona, cod_cliente, cod_prod];
-      console.log("Parámetros updateLineaQuery:", lineaParams);
-      const [lineaResult] = await connection.execute(updateLineaQuery, lineaParams);
-      console.log("Resultado updateLineaQuery:", lineaResult);
-
-      // Actualizar en soda_hoja_completa:
-      // Se verifica por: cod_rep, cod_zona, cod_cliente, cod_prod y fecha
-      const updateCompletaQuery = `
-        UPDATE soda_hoja_completa
-        SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?, bidones_bajados = ?, motivo = ?
+      // 🔒 Paso 0: Validar si existe un movimiento HOY en soda_hoja_completa
+      const [movimientoHoy] = await connection.execute(`
+        SELECT 1 FROM soda_hoja_completa
         WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ? AND fecha = ?
-      `;
-      const completaParams = [venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, motivo, cod_rep, cod_zona, cod_cliente, cod_prod, fecha];
-      console.log("Parámetros updateCompletaQuery:", completaParams);
-      const [completaResult] = await connection.execute(updateCompletaQuery, completaParams);
-      console.log("Resultado updateCompletaQuery:", completaResult);
+        LIMIT 1
+      `, [cod_rep, cod_zona, cod_cliente, cod_prod, hoy]);
+
+      if (movimientoHoy.length === 0) {
+        connection.release();
+        console.log("🛑 No hay movimiento del día en soda_hoja_completa. Bloqueando modificación.");
+        return res.status(400).json({ success: false, error: 'Solo se pueden modificar registros del día actual.' });
+      }
+
+      // 1. Buscar la deuda anterior para calcular diferencia
+      const [lineaAnteriorRows] = await connection.execute(`
+        SELECT debe FROM soda_hoja_linea
+        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ?
+      `, [cod_rep, cod_zona, cod_cliente, cod_prod]);
+
+      const [completaAnteriorRows] = await connection.execute(`
+        SELECT debe FROM soda_hoja_completa
+        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ? AND fecha = ?
+      `, [cod_rep, cod_zona, cod_cliente, cod_prod, hoy]);
+
+      const debe_anterior_linea = parseInt(lineaAnteriorRows[0]?.debe || 0);
+      const debe_anterior_completa = parseInt(completaAnteriorRows[0]?.debe || 0);
+
+      // 2. Calcular deuda nueva
+      const ventaInt = parseInt(venta);
+      const ctdoInt = parseInt(cobrado_ctdo);
+      const ccteInt = parseInt(cobrado_ccte);
+      const nuevaDeuda = Math.max(ventaInt - ctdoInt - ccteInt, 0);
+
+      console.log(`🧮 Deuda anterior: ${debe_anterior_linea}, Nueva deuda: ${nuevaDeuda}`);
+
+      // 3. Actualizar soda_hoja_linea
+      await connection.execute(`
+        UPDATE soda_hoja_linea
+        SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?, debe = ?
+        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ?
+      `, [ventaInt, ctdoInt, ccteInt, nuevaDeuda, cod_rep, cod_zona, cod_cliente, cod_prod]);
+
+      // 4. Actualizar soda_hoja_completa
+      await connection.execute(`
+        UPDATE soda_hoja_completa
+        SET venta = ?, cobrado_ctdo = ?, cobrado_ccte = ?, bidones_bajados = ?, motivo = ?, debe = ?
+        WHERE cod_rep = ? AND cod_zona = ? AND cod_cliente = ? AND cod_prod = ? AND fecha = ?
+      `, [ventaInt, ctdoInt, ccteInt, bidones_bajados, motivo, nuevaDeuda, cod_rep, cod_zona, cod_cliente, cod_prod, hoy]);
+
+      // 5. Actualizar saldiA3 o saldiA4 en soda_hoja_header
+      const diferenciaDeuda = nuevaDeuda - debe_anterior_linea;
+      if (diferenciaDeuda !== 0) {
+        const campoSaldo = cod_prod === 'A3' ? 'saldiA3' : 'saldiA4';
+        await connection.execute(`
+          UPDATE soda_hoja_header
+          SET ${campoSaldo} = GREATEST(${campoSaldo} + ?, 0)
+          WHERE cod_cliente = ?
+        `, [diferenciaDeuda, cod_cliente]);
+        console.log(`🧾 ${campoSaldo} ajustado en ${diferenciaDeuda}`);
+      }
 
       await connection.commit();
-      console.log("Transacción confirmada");
       connection.release();
+      console.log("✅ Modificación completada");
       res.json({ success: true });
     } catch (err) {
       await connection.rollback();
       connection.release();
-      console.error('Error en la transacción:', err);
+      console.error('❌ Error en la transacción:', err);
       res.status(500).json({ success: false, error: 'Error al actualizar los registros' });
     }
   } catch (err) {
-    console.error('Error obteniendo conexión:', err);
+    console.error('❌ Error al obtener conexión:', err);
     res.status(500).json({ success: false, error: 'Error al obtener conexión a la base de datos' });
   }
 });
-
 
 
 

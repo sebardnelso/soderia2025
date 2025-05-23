@@ -687,9 +687,9 @@ app.post('/crear-cliente', async (req, res) => {
       // Insertar en soda_hoja_header
       await connection.execute(`
         INSERT INTO soda_hoja_header
-        (cod_cliente, nom_cliente, localidad, celular, cod_zona, secuencia, fecha, cod_rep, saldiA3, saldiA4)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [cod_cliente, razon, localidad, celular, numzona, secuencia, fecha, cod_rep, saldiA3, saldiA4]);
+        (cod_cliente, nom_cliente, localidad, celular, cod_zona, secuencia, fecha, cod_rep, ter, saldiA3, saldiA4)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)
+      `, [cod_cliente, razon, localidad, celular, numzona, secuencia, fecha, cod_rep, 1, saldiA3, saldiA4]);
 
       const debe = esPagoNo ? venta : 0;
       const cobrado_ctdo = esPagoSi ? venta : 0;

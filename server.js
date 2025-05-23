@@ -650,71 +650,81 @@ app.post('/movimientos-clientes', async (req, res) => {
 app.post('/crear-cliente', async (req, res) => {
   const { razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia } = req.body;
 
+  console.log('📥 Datos recibidos del frontend:', req.body);
+
   if (!razon || !localidad || !celular || !bidon || !cantidad || !pago || !numzona || !secuencia) {
+    console.log('❌ Faltan campos obligatorios');
     return res.status(400).json({ success: false, message: 'Todos los campos son obligatorios.' });
   }
 
-  let connection;
   try {
-    connection = await createDBConnection();
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
 
-    // Obtener y actualizar el cod_cliente desde la tabla numeracion
-    const [codigoRows] = await connection.execute(`SELECT codigo FROM numeracion`);
-    let cod_cliente = parseInt(codigoRows[0].codigo) + 1;
+      const [codigoRows] = await connection.execute(`SELECT codigo FROM numeracion`);
+      const cod_cliente = parseInt(codigoRows[0].codigo) + 1;
+      await connection.execute(`UPDATE numeracion SET codigo = ?`, [cod_cliente]);
+      console.log('🔢 Nuevo cod_cliente:', cod_cliente);
 
-    await connection.execute(`UPDATE numeracion SET codigo = ?`, [cod_cliente]);
+      const zona = parseInt(numzona);
+      let cod_rep = 0;
+      if (zona >= 10 && zona <= 15) cod_rep = 1;
+      else if (zona >= 20 && zona <= 25) cod_rep = 2;
+      else if (zona >= 31 && zona <= 35) cod_rep = 3;
+      else if (zona >= 41 && zona <= 45) cod_rep = 4;
+      console.log('🚛 cod_rep:', cod_rep);
 
-    // Calcular cod_rep según la zona
-    const zona = parseInt(numzona);
-    let cod_rep = 0;
-    if (zona >= 10 && zona <= 15) cod_rep = 1;
-    else if (zona >= 20 && zona <= 25) cod_rep = 2;
-    else if (zona >= 31 && zona <= 35) cod_rep = 3;
-    else if (zona >= 41 && zona <= 45) cod_rep = 4;
+      const venta = parseInt(cantidad);
+      const pagoUpper = pago.toUpperCase();
+      const esPagoNo = pagoUpper === 'NO';
+      const esPagoSi = pagoUpper === 'SI';
+      const fecha = new Date().toISOString().split('T')[0];
 
-    // Determinar saldos
-    const saldiA3 = bidon === 'A3' && pago === 'NO' ? parseInt(cantidad) : 0;
-    const saldiA4 = bidon === 'A4' && pago === 'NO' ? parseInt(cantidad) : 0;
+      const saldiA3 = bidon === 'A3' && esPagoNo ? venta : 0;
+      const saldiA4 = bidon === 'A4' && esPagoNo ? venta : 0;
 
-    const fechaHoy = new Date().toISOString().split('T')[0];
+      // Insertar en soda_hoja_header
+      await connection.execute(`
+        INSERT INTO soda_hoja_header
+        (cod_cliente, nom_cliente, localidad, celular, cod_zona, secuencia, fecha, cod_rep, saldiA3, saldiA4)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [cod_cliente, razon, localidad, celular, numzona, secuencia, fecha, cod_rep, saldiA3, saldiA4]);
 
-    // Insertar en soda_hoja_header
-    await connection.execute(
-      `INSERT INTO soda_hoja_header (cod_cliente, nom_cliente, localidad, celular, cod_zona, cod_secuencia, fecha, cod_rep, saldiA3, saldiA4)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [cod_cliente, razon, localidad, celular, numzona, secuencia, fechaHoy, cod_rep, saldiA3, saldiA4]
-    );
+      const debe = esPagoNo ? venta : 0;
+      const cobrado_ctdo = esPagoSi ? venta : 0;
 
-    // Armar datos para insertar en soda_hoja_linea
-    const venta = parseInt(cantidad);
-    const debeA3 = bidon === 'A3' && pago === 'NO' ? venta : 0;
-    const debeA4 = bidon === 'A4' && pago === 'NO' ? venta : 0;
-    const cobradoA3 = bidon === 'A3' && pago === 'SI' ? venta : 0;
-    const cobradoA4 = bidon === 'A4' && pago === 'SI' ? venta : 0;
+      // ✅ Insertar en soda_hoja_linea SOLO el producto que seleccionó el usuario
+      await connection.execute(`
+        INSERT INTO soda_hoja_linea
+        (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [cod_rep, numzona, 1, cod_cliente, bidon, debe, venta, cobrado_ctdo, 0]);
 
-    // Insertar línea A3
-    await connection.execute(
-      `INSERT INTO soda_hoja_linea (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [cod_rep, numzona, 1, cod_cliente, 'A3', debeA3, venta, cobradoA3, 0]
-    );
+      // ✅ Insertar en soda_hoja_completa
+      await connection.execute(`
+        INSERT INTO soda_hoja_completa
+        (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte, bidones_bajados, fecha)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [cod_rep, numzona, 0, cod_cliente, bidon, debe, venta, cobrado_ctdo, 0, venta, fecha]);
 
-    // Insertar línea A4
-    await connection.execute(
-      `INSERT INTO soda_hoja_linea (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [cod_rep, numzona, 1, cod_cliente, 'A4', debeA4, venta, cobradoA4, 0]
-    );
+      await connection.commit();
+      console.log('✅ Cliente y líneas insertadas correctamente');
+      connection.release();
+      res.json({ success: true, message: 'Cliente creado exitosamente' });
 
-    res.json({ success: true, message: 'Cliente creado exitosamente' });
-  } catch (error) {
-    console.error('Error creando cliente:', error);
-    res.status(500).json({ success: false, message: 'Error al crear el cliente' });
-  } finally {
-    if (connection) await connection.end();
+    } catch (error) {
+      await connection.rollback();
+      connection.release();
+      console.error('❌ Error durante la transacción:', error);
+      res.status(500).json({ success: false, message: 'Error en la transacción al crear el cliente' });
+    }
+
+  } catch (err) {
+    console.error('❌ Error al obtener conexión desde el pool:', err);
+    res.status(500).json({ success: false, message: 'Error al obtener conexión a la base de datos' });
   }
 });
-
 // POST /soda_cardes (inserta carga/descarga)
 app.post('/soda_cardes', async (req, res) => {
   const { fecha, cod_rep, cod_prod, cod_zona, cantidad, movimiento } = req.body;

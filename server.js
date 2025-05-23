@@ -654,27 +654,66 @@ app.post('/crear-cliente', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Todos los campos son obligatorios.' });
   }
 
-  const insertClienteQuery = `
-    INSERT INTO clientenuevo (razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-
   let connection;
   try {
     connection = await createDBConnection();
-    await connection.execute(insertClienteQuery, [razon, localidad, celular, bidon, cantidad, pago, numzona, secuencia]);
+
+    // Obtener y actualizar el cod_cliente desde la tabla numeracion
+    const [codigoRows] = await connection.execute(`SELECT codigo FROM numeracion`);
+    let cod_cliente = parseInt(codigoRows[0].codigo) + 1;
+
+    await connection.execute(`UPDATE numeracion SET codigo = ?`, [cod_cliente]);
+
+    // Calcular cod_rep según la zona
+    const zona = parseInt(numzona);
+    let cod_rep = 0;
+    if (zona >= 10 && zona <= 15) cod_rep = 1;
+    else if (zona >= 20 && zona <= 25) cod_rep = 2;
+    else if (zona >= 31 && zona <= 35) cod_rep = 3;
+    else if (zona >= 41 && zona <= 45) cod_rep = 4;
+
+    // Determinar saldos
+    const saldiA3 = bidon === 'A3' && pago === 'NO' ? parseInt(cantidad) : 0;
+    const saldiA4 = bidon === 'A4' && pago === 'NO' ? parseInt(cantidad) : 0;
+
+    const fechaHoy = new Date().toISOString().split('T')[0];
+
+    // Insertar en soda_hoja_header
+    await connection.execute(
+      `INSERT INTO soda_hoja_header (cod_cliente, nom_cliente, localidad, celular, cod_zona, cod_secuencia, fecha, cod_rep, saldiA3, saldiA4)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [cod_cliente, razon, localidad, celular, numzona, secuencia, fechaHoy, cod_rep, saldiA3, saldiA4]
+    );
+
+    // Armar datos para insertar en soda_hoja_linea
+    const venta = parseInt(cantidad);
+    const debeA3 = bidon === 'A3' && pago === 'NO' ? venta : 0;
+    const debeA4 = bidon === 'A4' && pago === 'NO' ? venta : 0;
+    const cobradoA3 = bidon === 'A3' && pago === 'SI' ? venta : 0;
+    const cobradoA4 = bidon === 'A4' && pago === 'SI' ? venta : 0;
+
+    // Insertar línea A3
+    await connection.execute(
+      `INSERT INTO soda_hoja_linea (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [cod_rep, numzona, 1, cod_cliente, 'A3', debeA3, venta, cobradoA3, 0]
+    );
+
+    // Insertar línea A4
+    await connection.execute(
+      `INSERT INTO soda_hoja_linea (cod_rep, cod_zona, orden, cod_cliente, cod_prod, debe, venta, cobrado_ctdo, cobrado_ccte)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [cod_rep, numzona, 1, cod_cliente, 'A4', debeA4, venta, cobradoA4, 0]
+    );
+
     res.json({ success: true, message: 'Cliente creado exitosamente' });
   } catch (error) {
     console.error('Error creando cliente:', error);
     res.status(500).json({ success: false, message: 'Error al crear el cliente' });
   } finally {
-    if (connection) {
-      await connection.end();
-    }
+    if (connection) await connection.end();
   }
 });
-// Ruta de Carga y descarga de camión
-// En tu app.js de Express (o donde tengas tus rutas)
 
 // POST /soda_cardes (inserta carga/descarga)
 app.post('/soda_cardes', async (req, res) => {
